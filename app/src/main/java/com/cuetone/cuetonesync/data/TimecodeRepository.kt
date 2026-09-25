@@ -14,10 +14,10 @@ object TimecodeRepository {
     }
 
     fun getDeviceFrame(device: TimecodeDevice): Int {
-        return getMasterFrame() + device.frameOffset
+        return getMasterFrame(device.fps.frameRate) + device.frameOffset
     }
 
-    fun offsetForTargetFrame(targetFrame: Int): Int {
-        return targetFrame - getMasterFrame()
+    fun offsetForTargetFrame(targetFrame: Int, frameRate: Int = 25): Int {
+        return targetFrame - getMasterFrame(frameRate)
     }
 }

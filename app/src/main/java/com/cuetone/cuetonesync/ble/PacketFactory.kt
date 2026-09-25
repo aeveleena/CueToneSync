@@ -1,193 +1,194 @@
 package com.cuetone.cuetonesync.ble
 
-import com.cuetone.cuetonesync.ble.model.GeneratorPacket
+import com.cuetone.cuetonesync.ble.model.ClapperPacket
+import com.cuetone.cuetonesync.ble.model.SlateRecordPacket
 import com.cuetone.cuetonesync.model.DeviceRole
+import com.cuetone.cuetonesync.model.FpsOption
+import com.cuetone.cuetonesync.model.SlateRecord
 import com.cuetone.cuetonesync.model.TimecodeDevice
 import com.cuetone.cuetonesync.util.splitFrames
-import com.cuetone.cuetonesync.ble.model.ClapperPacket
-import com.cuetone.cuetonesync.ble.model.SyncPacket
-import com.cuetone.cuetonesync.model.FpsOption
-import com.cuetone.cuetonesync.ble.model.SlateRecordPacket
-import com.cuetone.cuetonesync.model.SlateRecord
 
 object PacketFactory {
-
-    // Формирует пакет состояния генератора таймкода.
-    // Используется при изменении настроек генератора, сбросе таймкода или изменении его роли в синхронизации
     fun buildGeneratorPacket(
         device: TimecodeDevice,
         currentFrame: Int
-    ): ByteArray {
-        // Переводим общее количество кадров в часы, минуты, секунды и кадры
-        val tc = splitFrames(
-            totalFrames = currentFrame,
-            frameRate = device.fps.frameRate
+    ): CueToneTransmission {
+        val tc = splitFrames(currentFrame, device.fps.frameRate)
+        val channel = device.channel.ordinal + 1
+        val syncMode = if (device.role == DeviceRole.MASTER) 0 else 1
+        val flags0 =
+            (if (isDropFrame(device.fps)) 1 else 0) or
+                (if (device.role == DeviceRole.MASTER) (1 shl 4) else 0) or
+                (1 shl 5)
+        val flags1 = fpsEnum(device.fps) and 0x0F
+        val signalInfo =
+            (if (device.outputVolume == "LTC") 1 else 0) or
+                ((syncMode and 0x03) shl 3) or
+                CueToneLegacyProtocol.channelSignalBits(channel)
+        val channelAndBatteryTime = CueToneLegacyProtocol.channelBatteryBits(channel)
+
+        val payload = byteArrayOf(
+            flags0.toByte(),
+            flags1.toByte(),
+            device.batteryLevel.coerceIn(0, 100).toByte(),
+            tc.hours.toByte(),
+            tc.minutes.toByte(),
+            tc.seconds.toByte(),
+            tc.frames.toByte(),
+            signalInfo.toByte(),
+            channelAndBatteryTime.toByte()
         )
 
-        // Собираем модель пакета генератора на основе текущего состояния устройства
-        val packet = GeneratorPacket(
-            serialNumber = device.serialNumber,
-            deviceName = device.name,
-
-            syncMode = 1,
-
-            isMaster = device.role == DeviceRole.MASTER,
-            channel = device.channel.name.first(),
-            frameRate = device.fps.frameRate,
-
-            hours = tc.hours,
-            minutes = tc.minutes,
-            seconds = tc.seconds,
-            frames = tc.frames,
-
-            // signalLevel: false = Audio-TC, true = LTC
-            signalLevel = device.outputVolume == "LTC",
-
-            displayBrightness = device.displayBrightness,
-
-            // Автоблокировка хранится в секундах
-            timeSleep = device.autoLock.seconds,
-
-            userBits = device.userBit
+        return CueToneLegacyProtocol.directTransmission(
+            target = CueToneLegacyProtocol.normalizeDeviceTarget(device.id),
+            packetType = CueToneLegacyProtocol.PACKET_GENERATOR,
+            payload = payload
         )
-
-        // Преобразуем модель пакета генератора в массив байтов
-        return CueTonePacketSerializer.serializeGeneratorPacket(packet)
     }
 
-    // Формирует пакет состояния электронной кинохлопушки.
-    // Похож на пакет генератора, но содержит параметры GPS/GPS Sync и не содержит параметр автоблокировки
+    fun buildGeneratorNamePacket(
+        deviceId: Int,
+        name: String
+    ): CueToneTransmission {
+        val nameBytes = utf8Prefix(name.trim(), 6)
+        require(nameBytes.isNotEmpty()) { "Generator name must not be empty" }
+        val payload = byteArrayOf(
+            CueToneLegacyProtocol.CONTROL_SET_DEVICE_NAME.toByte(),
+            nameBytes.size.toByte()
+        ) + nameBytes
+
+        return CueToneLegacyProtocol.directTransmission(
+            target = CueToneLegacyProtocol.normalizeDeviceTarget(deviceId),
+            packetType = CueToneLegacyProtocol.PACKET_DEVICE_NAME,
+            payload = payload,
+            role = CueToneLegacyProtocol.ROLE_APP_CONTROL
+        )
+    }
+
     fun buildClapperPacket(
         device: TimecodeDevice,
         currentFrame: Int
-    ): ByteArray {
-        val tc = splitFrames(
-            totalFrames = currentFrame,
-            frameRate = device.fps.frameRate
-        )
-
-        // Собираем модель пакета хлопушки
+    ): CueToneTransmission {
+        val tc = splitFrames(currentFrame, device.fps.frameRate)
         val packet = ClapperPacket(
             serialNumber = device.serialNumber,
             deviceName = device.name,
-
             syncMode = 1,
-
             isMaster = device.role == DeviceRole.MASTER,
             channel = device.channel.name.first(),
             frameRate = device.fps.frameRate,
-
             hours = tc.hours,
             minutes = tc.minutes,
             seconds = tc.seconds,
             frames = tc.frames,
-
             signalLevel = device.outputVolume == "LTC",
-
-            // Эти параметры актуальны только для электронной кинохлопушки
             gps = device.gpsEnabled,
             gpsSync = device.gpsSyncEnabled,
-
             displayBrightness = device.displayBrightness,
             userBits = device.userBit
         )
+        val payload = CueTonePacketSerializer.serializeClapperPacket(packet)
 
-        // Преобразуем модель пакета хлопушки в массив байтов
-        return CueTonePacketSerializer.serializeClapperPacket(packet)
+        return CueToneLegacyProtocol.fragmentedTransmission(
+            target = CueToneLegacyProtocol.normalizeDeviceTarget(device.id),
+            packetType = CueToneLegacyProtocol.PACKET_CLAPPER,
+            payload = payload
+        )
     }
 
-    // Универсальный метод для формирования пакета состояния устройства.
-    // По типу устройства выбирает пакет №1 для генератора или пакет №2 для хлопушки
     fun buildDeviceStatePacket(
         device: TimecodeDevice,
         currentFrame: Int
-    ): ByteArray {
-        return if (device.type == "Clapper") {
-            buildClapperPacket(
-                device = device,
-                currentFrame = currentFrame
-            )
-        } else {
-            buildGeneratorPacket(
-                device = device,
-                currentFrame = currentFrame
-            )
-        }
+    ): CueToneTransmission = if (device.type == "Clapper") {
+        buildClapperPacket(device, currentFrame)
+    } else {
+        buildGeneratorPacket(device, currentFrame)
     }
 
-    // Формирует пакет синхронизации канала
-    // Используется при Sync All и Manual TC
+    @Suppress("UNUSED_PARAMETER")
     fun buildSyncPacket(
         devicesInChannel: List<TimecodeDevice>,
         masterDevice: TimecodeDevice,
         targetFrame: Int,
         fps: FpsOption,
         userBit: String
-    ): ByteArray {
-        // Целевой таймкод переводится из кадров в структуру времени
-        val tc = splitFrames(
-            totalFrames = targetFrame,
-            frameRate = fps.frameRate
+    ): CueToneTransmission {
+        require(devicesInChannel.isNotEmpty()) { "Channel sync requires at least one device" }
+        val tc = splitFrames(targetFrame, fps.frameRate)
+        val channel = masterDevice.channel.ordinal + 1
+        val masterId = CueToneLegacyProtocol.normalizeDeviceTarget(masterDevice.id)
+        val flags0 =
+            (fpsEnum(fps) and 0x0F) or
+                (if (isDropFrame(fps)) (1 shl 4) else 0) or
+                (1 shl 6)
+        val payload = byteArrayOf(
+            tc.hours.toByte(),
+            tc.minutes.toByte(),
+            tc.seconds.toByte(),
+            tc.frames.toByte(),
+            (masterId and 0xFF).toByte(),
+            ((masterId shr 8) and 0xFF).toByte(),
+            flags0.toByte(),
+            (channel and 0x1F).toByte()
         )
 
-        val packet = SyncPacket(
-            channel = masterDevice.channel,
-            masterDeviceId = masterDevice.id,
-            deviceIds = devicesInChannel.map { it.id },
-            frameRate = fps.frameRate,
-            hours = tc.hours,
-            minutes = tc.minutes,
-            seconds = tc.seconds,
-            frames = tc.frames,
-            userBits = userBit
+        return CueToneLegacyProtocol.directTransmission(
+            target = CueToneLegacyProtocol.channelTarget(masterDevice.channel.ordinal),
+            packetType = CueToneLegacyProtocol.PACKET_SYNC,
+            payload = payload
         )
-
-        // Преобразуем пакет синхронизации в массив байтов
-        return CueTonePacketSerializer.serializeSyncPacket(packet)
     }
 
-    // Формирует пакет строки таблицы дублей
-    // Используется при сохранении изменённой строки таблицы хлопушки
     fun buildSlateRecordPacket(
-        record: SlateRecord
-    ): ByteArray {
-        // Таймкод строки хранится как строка, поэтому перед отправкой разбираем его
+        record: SlateRecord,
+        clapperDeviceId: Int
+    ): CueToneTransmission {
         val timecode = parseTimecode(record.timecode)
-
         val packet = SlateRecordPacket(
             tableName = "SlateLog",
             rowNumber = record.number,
-
             hours = timecode.hours,
             minutes = timecode.minutes,
             seconds = timecode.seconds,
             frames = timecode.frames,
-
             episode = record.episode,
             scene = record.scene,
             shot = record.shot,
             take = record.take,
-
             isGood = record.isGood,
-
             latitude = record.latitude,
             longitude = record.longitude,
             gpsTime = record.gpsTime
         )
+        val payload = CueTonePacketSerializer.serializeSlateRecordPacket(packet)
 
-        // Преобразуем строку таблицы дублей в массив байтов
-        return CueTonePacketSerializer.serializeSlateRecordPacket(packet)
+        return CueToneLegacyProtocol.fragmentedTransmission(
+            target = CueToneLegacyProtocol.normalizeDeviceTarget(clapperDeviceId),
+            packetType = CueToneLegacyProtocol.PACKET_SLATE_RECORD,
+            payload = payload
+        )
     }
 
-    // Разбирает строковое представление таймкода в отдельные поля
-    // Поддерживается формат вида хх:хх:хх.хх
-    private fun parseTimecode(
-        value: String
-    ): ParsedTimecode {
-        val parts = value
-            .replace(".", ":")
-            .split(":")
+    private fun fpsEnum(fps: FpsOption): Int = when (fps) {
+        FpsOption.FPS_23_98 -> 0
+        FpsOption.FPS_24 -> 1
+        FpsOption.FPS_25 -> 2
+        FpsOption.FPS_29_97,
+        FpsOption.FPS_29_97_DF -> 3
+        FpsOption.FPS_30 -> 4
+        FpsOption.FPS_47_95 -> 5
+        FpsOption.FPS_48 -> 6
+        FpsOption.FPS_50 -> 7
+        FpsOption.FPS_59_94,
+        FpsOption.FPS_59_94_DF -> 8
+        FpsOption.FPS_60 -> 9
+    }
 
+    private fun isDropFrame(fps: FpsOption): Boolean =
+        fps == FpsOption.FPS_29_97_DF || fps == FpsOption.FPS_59_94_DF
+
+    private fun parseTimecode(value: String): ParsedTimecode {
+        val parts = value.replace(".", ":").split(":")
         return ParsedTimecode(
             hours = parts.getOrNull(0)?.toIntOrNull() ?: 0,
             minutes = parts.getOrNull(1)?.toIntOrNull() ?: 0,
@@ -196,7 +197,16 @@ object PacketFactory {
         )
     }
 
-    // Вспомогательная модель для хранения разобранного таймкода
+    private fun utf8Prefix(value: String, maxByteLength: Int): ByteArray {
+        val result = mutableListOf<Byte>()
+        value.forEach { character ->
+            val bytes = character.toString().encodeToByteArray()
+            if (result.size + bytes.size > maxByteLength) return result.toByteArray()
+            result.addAll(bytes.toList())
+        }
+        return result.toByteArray()
+    }
+
     private data class ParsedTimecode(
         val hours: Int,
         val minutes: Int,

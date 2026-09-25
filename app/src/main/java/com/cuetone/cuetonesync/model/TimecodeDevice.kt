@@ -25,7 +25,7 @@ enum class DeviceRole {
 }
 
 enum class DeviceChannel {
-    A, B, C, D
+    A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P
 }
 
 enum class AutoLockOption(

@@ -6,7 +6,35 @@ import com.cuetone.cuetonesync.model.TimecodeDevice
 
 object DevicesRepository {
 
-    val devices = mutableStateListOf<TimecodeDevice>()
+    val devices = mutableStateListOf<TimecodeDevice>().apply {
+        addAll(MockDevices.availableDevices)
+    }
+
+    val discoveredGenerators = mutableStateListOf<TimecodeDevice>()
+
+    fun onGeneratorDiscovered(device: TimecodeDevice) {
+        if (device.type != "Generator") return
+
+        val addedIndex = devices.indexOfFirst { it.id == device.id }
+        if (addedIndex >= 0) {
+            devices[addedIndex] = device
+            return
+        }
+
+        val discoveredIndex = discoveredGenerators.indexOfFirst { it.id == device.id }
+        if (discoveredIndex >= 0) {
+            discoveredGenerators[discoveredIndex] = device
+        } else {
+            discoveredGenerators.add(device)
+        }
+    }
+
+    fun addDiscoveredGenerator(device: TimecodeDevice) {
+        if (devices.none { it.id == device.id }) {
+            devices.add(device)
+        }
+        discoveredGenerators.removeAll { it.id == device.id }
+    }
 
     fun updateDevice(updatedDevice: TimecodeDevice) {
         val index = devices.indexOfFirst { it.id == updatedDevice.id }
@@ -19,6 +47,13 @@ object DevicesRepository {
     fun getDeviceById(id: Int): TimecodeDevice? {
         return devices.firstOrNull { it.id == id }
             ?: MockDevices.availableDevices.firstOrNull { it.id == id }
+    }
+
+    fun getClapperBySerialOrFirst(serialNumber: String?): TimecodeDevice? {
+        val allDevices = devices + MockDevices.availableDevices
+        return allDevices.firstOrNull {
+            it.type == "Clapper" && it.serialNumber == serialNumber
+        } ?: allDevices.firstOrNull { it.type == "Clapper" }
     }
 
     fun setMasterForChannel(masterDevice: TimecodeDevice) {

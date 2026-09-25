@@ -2,28 +2,64 @@ package com.cuetone.cuetonesync.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.cuetone.cuetonesync.data.SlateRepository
+import com.cuetone.cuetonesync.data.local.CueToneDatabase
+import com.cuetone.cuetonesync.data.repository.ProjectRepository
+import com.cuetone.cuetonesync.data.repository.SlateRepository
+import com.cuetone.cuetonesync.ui.theme.AppBackground
+import com.cuetone.cuetonesync.ui.theme.AppSurface
+import com.cuetone.cuetonesync.ui.theme.Primary
+import com.cuetone.cuetonesync.ui.theme.TextPrimary
+import com.cuetone.cuetonesync.ui.theme.TextSecondary
 
 @Composable
 fun SlateTableScreen(
+    tableId: Long,
     onBackClick: () -> Unit,
-    onRecordClick: (Int) -> Unit
+    onRecordClick: (Long) -> Unit
 ) {
+    val context = LocalContext.current
+    val database = remember { CueToneDatabase.getDatabase(context) }
+    val slateRepository = remember { SlateRepository(database.slateRecordDao()) }
+    val projectRepository = remember {
+        ProjectRepository(
+            database.projectDao(),
+            database.folderDao(),
+            database.logTableDao()
+        )
+    }
+    val records by slateRepository.observeRecords(tableId).collectAsState(initial = emptyList())
+    val table by projectRepository.observeTable(tableId).collectAsState(initial = null)
+
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF121212)
+        color = AppBackground
     ) {
         Column(
             modifier = Modifier
@@ -43,8 +79,8 @@ fun SlateTableScreen(
                 }
 
                 Text(
-                    text = "Таблица дублей",
-                    color = Color.White,
+                    text = table?.name ?: "Таблица дублей",
+                    color = TextPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -55,7 +91,7 @@ fun SlateTableScreen(
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(SlateRepository.records) { record ->
+                items(records) { record ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -63,12 +99,12 @@ fun SlateTableScreen(
                                 onRecordClick(record.id)
                             },
                         colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFF242424)
+                            containerColor = AppSurface
                         ),
                         border = if (record.isGood) {
                             BorderStroke(
                                 width = 1.5.dp,
-                                color = Color(0xFF6F95B9)
+                                color = Primary
                             )
                         } else {
                             null
@@ -82,18 +118,18 @@ fun SlateTableScreen(
                         ) {
                             Text(
                                 text = "№${record.number}",
-                                color = Color.White,
+                                color = TextPrimary,
                                 fontWeight = FontWeight.Bold
                             )
 
                             Text(
                                 text = record.timecode,
-                                color = Color.LightGray
+                                color = TextSecondary
                             )
 
                             Text(
                                 text = "С${record.scene} / Д${record.take}",
-                                color = Color.LightGray
+                                color = TextSecondary
                             )
                         }
                     }

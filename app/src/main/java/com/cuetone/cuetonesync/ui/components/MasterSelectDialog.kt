@@ -18,13 +18,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cuetone.cuetonesync.model.DeviceChannel
 import com.cuetone.cuetonesync.model.DeviceRole
 import com.cuetone.cuetonesync.model.TimecodeDevice
+import com.cuetone.cuetonesync.ui.theme.*
 
 @Composable
 fun MasterSelectDialog(
@@ -49,11 +49,11 @@ fun MasterSelectDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF242424),
+        containerColor = AppSurface,
         title = {
             Text(
                 text = "Синхронизация канала",
-                color = Color.White,
+                color = TextPrimary,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -64,7 +64,7 @@ fun MasterSelectDialog(
             ) {
                 Text(
                     text = "Канал",
-                    color = Color.White,
+                    color = TextPrimary,
                     fontWeight = FontWeight.Bold
                 )
 
@@ -80,14 +80,14 @@ fun MasterSelectDialog(
 
                 Text(
                     text = "Устройство-мастер",
-                    color = Color.White,
+                    color = TextPrimary,
                     fontWeight = FontWeight.Bold
                 )
 
                 if (channelDevices.isEmpty()) {
                     Text(
                         text = "В выбранном канале нет устройств",
-                        color = Color.LightGray
+                        color = TextSecondary
                     )
                 } else {
                     Column(
@@ -100,14 +100,14 @@ fun MasterSelectDialog(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .background(
-                                        if (selected) Color(0xFF6F95B9) else Color(0xFF3A3A3A),
+                                        if (selected) Selected else SurfaceElevated,
                                         RoundedCornerShape(14.dp)
                                     )
                                     .then(
                                         if (selected) {
                                             Modifier.border(
                                                 width = 1.dp,
-                                                color = Color.White,
+                                                color = Primary,
                                                 shape = RoundedCornerShape(14.dp)
                                             )
                                         } else {
@@ -122,7 +122,7 @@ fun MasterSelectDialog(
                             ) {
                                 Text(
                                     text = "${device.name} · ${device.type}",
-                                    color = Color.White,
+                                    color = TextPrimary,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -140,8 +140,9 @@ fun MasterSelectDialog(
                     }
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF6F95B9),
-                    contentColor = Color.White
+                    containerColor = Primary,
+                    contentColor = TextPrimary,
+                    disabledContainerColor = TextDisabled
                 )
             ) {
                 Text("Синхронизировать")
@@ -151,7 +152,7 @@ fun MasterSelectDialog(
             TextButton(onClick = onDismiss) {
                 Text(
                     text = "Отмена",
-                    color = Color(0xFF6F95B9)
+                    color = Primary
                 )
             }
         }
@@ -182,27 +183,29 @@ fun MasterSoftDropdown(
                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             },
             colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                focusedBorderColor = Color(0xFF6F95B9),
-                unfocusedBorderColor = Color.Gray,
-                focusedLabelColor = Color(0xFF6F95B9),
-                unfocusedLabelColor = Color.Gray,
-                cursorColor = Color.White
+                focusedTextColor = TextPrimary,
+                unfocusedTextColor = TextPrimary,
+                focusedBorderColor = Primary,
+                unfocusedBorderColor = Border,
+                focusedLabelColor = Primary,
+                unfocusedLabelColor = TextSecondary,
+                cursorColor = Primary,
+                focusedContainerColor = SurfaceElevated,
+                unfocusedContainerColor = SurfaceElevated
             )
         )
 
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            containerColor = Color(0xFF242424)
+            containerColor = SurfaceElevated
         ) {
             options.forEach { option ->
                 DropdownMenuItem(
                     text = {
                         Text(
                             text = option,
-                            color = Color.White
+                            color = TextPrimary
                         )
                     },
                     onClick = {

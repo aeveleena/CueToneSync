@@ -3,10 +3,9 @@ package com.cuetone.cuetonesync.ble
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
+import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
-import android.bluetooth.le.AdvertisingSet
-import android.bluetooth.le.AdvertisingSetCallback
-import android.bluetooth.le.AdvertisingSetParameters
+import android.bluetooth.le.AdvertiseSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -14,6 +13,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import androidx.core.content.ContextCompat
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.UUID
 
 class CueToneBleAdvertiser(
@@ -28,184 +29,181 @@ class CueToneBleAdvertiser(
     private val advertiser
         get() = bluetoothAdapter?.bluetoothLeAdvertiser
 
-    private val serviceUuid =
-        ParcelUuid(UUID.fromString("0000c710-0000-1000-8000-00805f9b34fb"))
-
     private val handler = Handler(Looper.getMainLooper())
+    private var advertiseCallback: AdvertiseCallback? = null
+    private var operationToken = 0
 
-    private var advertisingSet: AdvertisingSet? = null
-    private var advertisingSetCallback: AdvertisingSetCallback? = null
-
-    private val advertiseWindowMs = 900L
-    private val pauseBetweenPacketsMs = 150L
+    private val burstDurationMs = 1_000L
+    private val pauseBetweenFragmentsMs = 120L
 
     fun sendPacket(
-        packet: ByteArray,
+        transmission: CueToneTransmission,
         onResult: (String) -> Unit
     ) {
+        val validationError = validateEnvironment()
+        if (validationError != null) {
+            onResult(validationError)
+            return
+        }
+
+        stopAdvertising()
+        CueToneBleRadioCoordinator.pauseScanning()
+        val token = operationToken
+        sendPayloadAt(transmission, 0, token, onResult)
+    }
+
+    fun sendPacketsSequentially(
+        transmissions: List<CueToneTransmission>,
+        onPacketResult: (Int, CueToneTransmission, String) -> Unit
+    ) {
+        if (transmissions.isEmpty()) return
+
+        var index = 0
+
+        fun sendNext() {
+            if (index >= transmissions.size) return
+            val currentIndex = index
+            val transmission = transmissions[currentIndex]
+            sendPacket(transmission) { status ->
+                onPacketResult(currentIndex, transmission, status)
+                index++
+                handler.postDelayed(::sendNext, pauseBetweenFragmentsMs)
+            }
+        }
+
+        sendNext()
+    }
+
+    fun stopAdvertising() {
+        operationToken++
+        handler.removeCallbacksAndMessages(null)
+        stopCurrentBurst()
+    }
+
+    private fun sendPayloadAt(
+        transmission: CueToneTransmission,
+        index: Int,
+        token: Int,
+        onResult: (String) -> Unit
+    ) {
+        if (token != operationToken) return
+
+        if (index >= transmission.advertisingPayloads.size) {
+            CueToneBleRadioCoordinator.resumeScanning()
+            onResult(
+                "Legacy BLE: отправлено ${transmission.fragmentCount} " +
+                    fragmentWord(transmission.fragmentCount)
+            )
+            return
+        }
+
+        val bleAdvertiser = advertiser ?: run {
+            CueToneBleRadioCoordinator.resumeScanning()
+            onResult("BLE advertising не поддерживается на этом устройстве")
+            return
+        }
+        val payload = transmission.advertisingPayloads[index]
+        val settings = AdvertiseSettings.Builder()
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+            .setConnectable(false)
+            .setTimeout(0)
+            .build()
+        val data = AdvertiseData.Builder()
+            .addServiceUuid(createServiceUuid(transmission.target, transmission.role))
+            .addManufacturerData(CueToneLegacyProtocol.COMPANY_ID, payload)
+            .setIncludeDeviceName(false)
+            .setIncludeTxPowerLevel(false)
+            .build()
+
+        val callback = object : AdvertiseCallback() {
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+                if (token != operationToken) return
+                handler.postDelayed({
+                    if (token != operationToken) return@postDelayed
+                    stopCurrentBurst()
+                    handler.postDelayed(
+                        { sendPayloadAt(transmission, index + 1, token, onResult) },
+                        pauseBetweenFragmentsMs
+                    )
+                }, burstDurationMs)
+            }
+
+            override fun onStartFailure(errorCode: Int) {
+                if (token != operationToken) return
+                advertiseCallback = null
+                CueToneBleRadioCoordinator.resumeScanning()
+                onResult("Ошибка legacy advertising: ${errorName(errorCode)}")
+            }
+        }
+
+        advertiseCallback = callback
+
+        try {
+            bleAdvertiser.startAdvertising(settings, data, callback)
+        } catch (_: SecurityException) {
+            advertiseCallback = null
+            CueToneBleRadioCoordinator.resumeScanning()
+            onResult("Нет разрешения BLUETOOTH_ADVERTISE")
+        } catch (exception: IllegalArgumentException) {
+            advertiseCallback = null
+            CueToneBleRadioCoordinator.resumeScanning()
+            onResult("Ошибка запуска legacy advertising: ${exception.message}")
+        }
+    }
+
+    private fun validateEnvironment(): String? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val granted = ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.BLUETOOTH_ADVERTISE
             ) == PackageManager.PERMISSION_GRANTED
-
-            if (!granted) {
-                onResult("Нет разрешения BLUETOOTH_ADVERTISE")
-                return
-            }
+            if (!granted) return "Нет разрешения BLUETOOTH_ADVERTISE"
         }
 
         val adapter = bluetoothAdapter
-
         if (adapter == null || !adapter.isEnabled) {
-            onResult("Bluetooth выключен или недоступен")
-            return
+            return "Bluetooth выключен или недоступен"
         }
-
-        val bleAdvertiser = advertiser
-
-        if (bleAdvertiser == null) {
-            onResult("BLE advertising не поддерживается на этом устройстве")
-            return
+        if (!adapter.isMultipleAdvertisementSupported) {
+            return "Legacy BLE advertising не поддерживается смартфоном"
         }
-
-        if (!adapter.isLeExtendedAdvertisingSupported) {
-            onResult("Extended advertising не поддерживается этим смартфоном")
-            return
+        if (advertiser == null) {
+            return "BLE advertising не поддерживается на этом устройстве"
         }
+        return null
+    }
 
-        val maxDataLength = adapter.leMaximumAdvertisingDataLength
-
-        if (packet.size > maxDataLength) {
-            onResult("Пакет слишком большой: ${packet.size} байт, максимум $maxDataLength")
-            return
-        }
-
-        stopAdvertising()
-
-        val parameters = AdvertisingSetParameters.Builder()
-            .setLegacyMode(false)
-            .setConnectable(false)
-            .setScannable(false)
-            .setInterval(AdvertisingSetParameters.INTERVAL_LOW)
-            .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_MEDIUM)
-            .build()
-
-        val data = AdvertiseData.Builder()
-            .addServiceUuid(serviceUuid)
-            .addManufacturerData(0xFFFF, packet)
-            .setIncludeDeviceName(false)
-            .setIncludeTxPowerLevel(false)
-            .build()
-
-        val callback = object : AdvertisingSetCallback() {
-            override fun onAdvertisingSetStarted(
-                advertisingSet: AdvertisingSet?,
-                txPower: Int,
-                status: Int
-            ) {
-                if (status == ADVERTISE_SUCCESS) {
-                    this@CueToneBleAdvertiser.advertisingSet = advertisingSet
-                    onResult("Extended BLE-пакет отправляется")
-                } else {
-                    onResult("Ошибка extended advertising: $status")
-                }
-            }
-
-            override fun onAdvertisingSetStopped(
-                advertisingSet: AdvertisingSet?
-            ) {
-                this@CueToneBleAdvertiser.advertisingSet = null
-            }
-        }
-
-        advertisingSetCallback = callback
-
+    private fun stopCurrentBurst() {
+        val callback = advertiseCallback ?: return
+        advertiseCallback = null
         try {
-            bleAdvertiser.startAdvertisingSet(
-                parameters,
-                data,
-                null,
-                null,
-                null,
-                0,
-                0,
-                callback
-            )
-        } catch (exception: SecurityException) {
-            onResult("Нет разрешения BLUETOOTH_ADVERTISE")
-        } catch (exception: IllegalArgumentException) {
-            onResult("Ошибка запуска extended advertising: ${exception.message}")
+            advertiser?.stopAdvertising(callback)
+        } catch (_: SecurityException) {
+            // Permission can be revoked while a burst is active.
         }
     }
 
-    fun sendPacketsSequentially(
-        packets: List<ByteArray>,
-        onPacketResult: (Int, ByteArray, String) -> Unit
-    ) {
-        if (packets.isEmpty()) {
-            return
-        }
-
-        var currentIndex = 0
-
-        fun sendNextPacket() {
-            if (currentIndex >= packets.size) {
-                stopAdvertising()
-                return
-            }
-
-            val packetIndex = currentIndex
-            val packet = packets[packetIndex]
-
-            sendPacket(packet) { status ->
-                onPacketResult(packetIndex, packet, status)
-
-                handler.postDelayed({
-                    stopAdvertising()
-
-                    currentIndex++
-
-                    handler.postDelayed({
-                        sendNextPacket()
-                    }, pauseBetweenPacketsMs)
-
-                }, advertiseWindowMs)
-            }
-        }
-
-        sendNextPacket()
+    private fun createServiceUuid(target: Int, role: Int): ParcelUuid {
+        val wireBytes = CueToneLegacyProtocol.serviceUuidWireBytes(target, role)
+        val buffer = ByteBuffer.wrap(wireBytes).order(ByteOrder.LITTLE_ENDIAN)
+        val leastSignificantBits = buffer.long
+        val mostSignificantBits = buffer.long
+        return ParcelUuid(UUID(mostSignificantBits, leastSignificantBits))
     }
 
-    fun stopAdvertising() {
-        handler.removeCallbacksAndMessages(null)
+    private fun fragmentWord(count: Int): String = when {
+        count % 10 == 1 && count % 100 != 11 -> "фрагмент"
+        count % 10 in 2..4 && count % 100 !in 12..14 -> "фрагмента"
+        else -> "фрагментов"
+    }
 
-        val bleAdvertiser = advertiser
-        val callback = advertisingSetCallback
-
-        if (bleAdvertiser != null && callback != null) {
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val granted = ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.BLUETOOTH_ADVERTISE
-                ) == PackageManager.PERMISSION_GRANTED
-
-                if (!granted) {
-                    advertisingSet = null
-                    advertisingSetCallback = null
-                    return
-                }
-            }
-
-            try {
-                bleAdvertiser.stopAdvertisingSet(callback)
-            } catch (exception: SecurityException) {
-                exception.printStackTrace()
-            }
-        }
-
-        advertisingSet = null
-        advertisingSetCallback = null
+    private fun errorName(errorCode: Int): String = when (errorCode) {
+        AdvertiseCallback.ADVERTISE_FAILED_DATA_TOO_LARGE -> "данные больше 31 байта"
+        AdvertiseCallback.ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "нет свободного advertising set"
+        AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED -> "реклама уже запущена"
+        AdvertiseCallback.ADVERTISE_FAILED_INTERNAL_ERROR -> "внутренняя ошибка Bluetooth"
+        AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "функция не поддерживается"
+        else -> "код $errorCode"
     }
 }

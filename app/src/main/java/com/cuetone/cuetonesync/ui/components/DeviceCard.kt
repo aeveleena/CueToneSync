@@ -10,13 +10,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.cuetone.cuetonesync.model.DeviceRole
 import com.cuetone.cuetonesync.model.TimecodeDevice
-import com.cuetone.cuetonesync.util.FRAME_RATE
 import com.cuetone.cuetonesync.util.formatTimecode
+import com.cuetone.cuetonesync.ui.theme.*
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
@@ -38,7 +37,7 @@ fun DeviceCard(
             .fillMaxWidth()
             .clickable { onClick() },
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF242424)
+            containerColor = AppSurface
         ),
         shape = RoundedCornerShape(20.dp)
     ) {
@@ -52,7 +51,7 @@ fun DeviceCard(
             ) {
                 Text(
                     text = device.name,
-                    color = Color.White,
+                    color = TextPrimary,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
@@ -60,13 +59,13 @@ fun DeviceCard(
 
                 Text(
                     text = "${device.batteryLevel}%",
-                    color = Color.LightGray
+                    color = TextSecondary
                 )
             }
 
             Text(
                 text = device.type,
-                color = Color.Gray
+                color = TextSecondary
             )
 
             Row(
@@ -74,7 +73,7 @@ fun DeviceCard(
             ) {
                 Text(
                     text = formatTimecode(currentFrame, device.fps.frameRate),
-                    color = Color.White,
+                    color = TextPrimary,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.width(150.dp)
@@ -84,7 +83,7 @@ fun DeviceCard(
 
                 Text(
                     text = "| ${device.fps.title}",
-                    color = Color.LightGray,
+                    color = TextSecondary,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -104,7 +103,11 @@ fun DeviceCard(
                     InfoChip(text = "CH ${device.channel.name}")
 
                     if (device.isRecording) {
-                        InfoChip(text = "REC", color = Color(0xFF8E454C))
+                        InfoChip(
+                            text = "REC",
+                            color = Recording,
+                            backgroundColor = RecordingSoft
+                        )
                     } else {
                         InfoChip(text = "READY")
                     }
@@ -118,7 +121,7 @@ fun DeviceCard(
                     ) {
                         Text(
                             text = "⋮",
-                            color = Color.White,
+                            color = TextSecondary,
                             style = MaterialTheme.typography.titleLarge
                         )
                     }

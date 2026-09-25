@@ -1,7 +1,8 @@
 package com.cuetone.cuetonesync.model
 
 data class SlateRecord(
-    val id: Int,
+    val id: Long,
+    val tableId: Long,
     val number: Int,
     val timecode: String,
 

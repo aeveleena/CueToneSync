@@ -10,7 +10,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.cuetone.cuetonesync.model.DeviceChannel
@@ -21,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.DropdownMenu
+import com.cuetone.cuetonesync.ui.theme.*
 
 @Composable
 fun TimecodeHeader(
@@ -40,7 +40,7 @@ fun TimecodeHeader(
         ) {
             Text(
                 text = mainTimecode,
-                color = Color.White,
+                color = TextPrimary,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.width(150.dp)
@@ -48,7 +48,7 @@ fun TimecodeHeader(
 
             Text(
                 text = "| ${fps ?: "--"}",
-                color = Color.LightGray,
+                color = TextSecondary,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -72,8 +72,9 @@ fun TimecodeHeader(
             Button(
                 onClick = onSyncAllClick,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF8E454C),
-                    contentColor = Color.White
+                    containerColor = Primary,
+                    contentColor = TextPrimary,
+                    disabledContainerColor = TextDisabled
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f)
@@ -84,7 +85,8 @@ fun TimecodeHeader(
             OutlinedButton(
                 onClick = onManualSyncClick,
                 colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = Color.White
+                    containerColor = SurfaceElevated,
+                    contentColor = TextPrimary
                 ),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(1f)
@@ -108,7 +110,7 @@ fun HeaderChannelDropdown(
         Box(
             modifier = Modifier
                 .background(
-                    Color(0xFF242424),
+                    PrimarySoft,
                     RoundedCornerShape(10.dp)
                 )
                 .clickable {
@@ -119,7 +121,7 @@ fun HeaderChannelDropdown(
         ) {
             Text(
                 text = selectedChannel?.let { "CH ${it.name}" } ?: "CH",
-                color = Color(0xFF6F95B9),
+                color = Primary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -130,14 +132,14 @@ fun HeaderChannelDropdown(
             onDismissRequest = {
                 expanded = false
             },
-            containerColor = Color(0xFF242424)
+            containerColor = SurfaceElevated
         ) {
             availableChannels.forEach { channel ->
                 DropdownMenuItem(
                     text = {
                         Text(
                             text = "CH ${channel.name}",
-                            color = Color.White,
+                            color = TextPrimary,
                             fontSize = 13.sp
                         )
                     },

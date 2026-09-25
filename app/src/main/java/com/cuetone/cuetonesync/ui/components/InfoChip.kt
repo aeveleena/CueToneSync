@@ -11,16 +11,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.cuetone.cuetonesync.ui.theme.Primary
+import com.cuetone.cuetonesync.ui.theme.PrimarySoft
 
 @Composable
 fun InfoChip(
     text: String,
-    color: Color = Color(0xFF6F95B9)
+    color: Color = Primary,
+    backgroundColor: Color = PrimarySoft
 ) {
     Box(
         modifier = Modifier
             .background(
-                color = color.copy(alpha = 0.18f),
+                color = backgroundColor,
                 shape = RoundedCornerShape(8.dp)
             )
             .padding(horizontal = 10.dp, vertical = 5.dp)

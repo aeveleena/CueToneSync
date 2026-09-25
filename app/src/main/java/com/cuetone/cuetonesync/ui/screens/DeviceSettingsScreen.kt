@@ -11,7 +11,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -26,11 +25,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
 import com.cuetone.cuetonesync.ble.CueToneBleAdvertiser
+import com.cuetone.cuetonesync.ble.CueToneTransmission
+import com.cuetone.cuetonesync.ble.CueToneLegacyProtocol
 import com.cuetone.cuetonesync.ble.PacketFactory
 import com.cuetone.cuetonesync.data.PacketLogRepository
 import com.cuetone.cuetonesync.model.PacketLogEntry
 import com.cuetone.cuetonesync.permissions.BlePermissionManager
 import com.cuetone.cuetonesync.data.TimecodeRepository
+import com.cuetone.cuetonesync.ui.theme.*
 
 @Composable
 fun DeviceSettingsScreen(
@@ -43,18 +45,19 @@ fun DeviceSettingsScreen(
     val bleAdvertiser = remember { CueToneBleAdvertiser(context) }
 
     var bleStatus by remember { mutableStateOf("") }
-    var pendingPacket by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingPackets by remember { mutableStateOf<List<CueToneTransmission>>(emptyList()) }
 
-    fun sendAndLogPacket(packet: ByteArray) {
-        bleAdvertiser.sendPacket(packet) { status ->
-            val rawPacket = packet.joinToString(" ") {
-                "%02X".format(it)
-            }
+    fun sendAndLogPackets(packets: List<CueToneTransmission>) {
+        bleAdvertiser.sendPacketsSequentially(packets) { _, packet, status ->
+            val rawPacket = packet.toHexString()
 
-            val packetName = if (device.type == "Clapper") {
-                "Packet #2 / Clapper Settings"
-            } else {
-                "Packet #1 / Generator Settings"
+            val packetName = when {
+                packet.packetType == CueToneLegacyProtocol.PACKET_DEVICE_NAME ->
+                    "Generator Name"
+                device.type == "Clapper" ->
+                    "Packet #2 / Clapper Settings"
+                else ->
+                    "Packet #1 / Generator Settings"
             }
 
             bleStatus = status
@@ -63,17 +66,12 @@ fun DeviceSettingsScreen(
                 timestamp = System.currentTimeMillis(),
                 direction = "OUT",
                 deviceName = device.name,
-                packetType = "$packetName / ${packet.size} bytes",
-                status = "$status · ожидает подтверждения",
+                packetType = "$packetName / target 0x%04X / ${packet.logicalPayload.size} bytes / ${packet.fragmentCount} fragments".format(packet.target),
+                status = status,
                 rawData = rawPacket
             )
 
             PacketLogRepository.addLog(logEntry)
-
-            PacketLogRepository.simulateConfirmation(
-                logId = logEntry.id,
-                status = status
-            )
         }
     }
 
@@ -85,10 +83,10 @@ fun DeviceSettingsScreen(
             val granted = permissions.values.all { it }
 
             if (granted) {
-                pendingPacket?.let { packet ->
-                    sendAndLogPacket(packet)
+                if (pendingPackets.isNotEmpty()) {
+                    sendAndLogPackets(pendingPackets)
                 }
-                pendingPacket = null
+                pendingPackets = emptyList()
             } else {
                 bleStatus = "BLE-разрешение отклонено"
             }
@@ -156,7 +154,7 @@ fun DeviceSettingsScreen(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF121212)
+        color = AppBackground
     ) {
         Column(
             modifier = Modifier
@@ -177,7 +175,7 @@ fun DeviceSettingsScreen(
 
                 Text(
                     text = "Настройки",
-                    color = Color.White,
+                    color = TextPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -195,17 +193,32 @@ fun DeviceSettingsScreen(
 
                 OutlinedTextField(
                     value = deviceName,
-                    onValueChange = { deviceName = it },
+                    onValueChange = {
+                        deviceName = if (device.type == "Generator") {
+                            utf8Prefix(it, 6)
+                        } else {
+                            it
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    supportingText = if (device.type == "Generator") {
+                        { Text("До 6 байт") }
+                    } else {
+                        null
+                    },
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color(0xFF6F95B9),
-                        unfocusedBorderColor = Color.Gray,
-                        focusedLabelColor = Color(0xFF6F95B9),
-                        unfocusedLabelColor = Color.Gray,
-                        cursorColor = Color.White
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = Primary,
+                        unfocusedBorderColor = Border,
+                        focusedLabelColor = Primary,
+                        unfocusedLabelColor = TextSecondary,
+                        cursorColor = Primary,
+                        focusedContainerColor = SurfaceElevated,
+                        unfocusedContainerColor = SurfaceElevated,
+                        focusedSupportingTextColor = TextSecondary,
+                        unfocusedSupportingTextColor = TextSecondary
                     )
                 )
 
@@ -217,13 +230,15 @@ fun DeviceSettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color(0xFF6F95B9),
-                        unfocusedBorderColor = Color.Gray,
-                        focusedLabelColor = Color(0xFF6F95B9),
-                        unfocusedLabelColor = Color.Gray,
-                        cursorColor = Color.White
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = Primary,
+                        unfocusedBorderColor = Border,
+                        focusedLabelColor = Primary,
+                        unfocusedLabelColor = TextSecondary,
+                        cursorColor = Primary,
+                        focusedContainerColor = SurfaceElevated,
+                        unfocusedContainerColor = SurfaceElevated
                     )
                 )
 
@@ -249,9 +264,9 @@ fun DeviceSettingsScreen(
                                         .weight(1f)
                                         .background(
                                             if (selected)
-                                                Color(0xFF6F95B9)
+                                                Selected
                                             else
-                                                Color(0xFF242424),
+                                                AppSurface,
                                             RoundedCornerShape(12.dp)
                                         )
                                         .clickable {
@@ -265,9 +280,9 @@ fun DeviceSettingsScreen(
                                         text = fps.title,
                                         color =
                                             if (selected)
-                                                Color.Black
+                                                TextPrimary
                                             else
-                                                Color.White,
+                                                TextPrimary,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
@@ -400,8 +415,13 @@ fun DeviceSettingsScreen(
                 Button(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
+                        val requestedName = deviceName.trim()
+                        val generatorNameChanged =
+                            device.type == "Generator" &&
+                                requestedName.isNotEmpty() &&
+                                requestedName != device.name
                         val updatedDevice = device.copy(
-                            name = deviceName,
+                            name = if (device.type == "Generator") device.name else requestedName,
                             userBit = userBit,
                             fps = selectedFps,
                             outputVolume = outputVolume,
@@ -419,15 +439,27 @@ fun DeviceSettingsScreen(
 
                         DevicesRepository.updateDeviceWithMasterRule(updatedDevice)
 
-                        val packet = PacketFactory.buildDeviceStatePacket(
-                            device = updatedDevice,
-                            currentFrame = TimecodeRepository.getDeviceFrame(updatedDevice)
-                        )
+                        val packets = buildList {
+                            add(
+                                PacketFactory.buildDeviceStatePacket(
+                                    device = updatedDevice,
+                                    currentFrame = TimecodeRepository.getDeviceFrame(updatedDevice)
+                                )
+                            )
+                            if (generatorNameChanged) {
+                                add(
+                                    PacketFactory.buildGeneratorNamePacket(
+                                        deviceId = updatedDevice.id,
+                                        name = requestedName
+                                    )
+                                )
+                            }
+                        }
 
                         if (BlePermissionManager.hasBleAdvertisePermission(context)) {
-                            sendAndLogPacket(packet)
+                            sendAndLogPackets(packets)
                         } else {
-                            pendingPacket = packet
+                            pendingPackets = packets
                             permissionLauncher.launch(
                                 BlePermissionManager.requiredPermissions()
                             )
@@ -436,8 +468,8 @@ fun DeviceSettingsScreen(
                         onBackClick()
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF6F95B9),
-                        contentColor = Color(0xFF242424)
+                        containerColor = Primary,
+                        contentColor = TextPrimary
                     ),
                     shape = RoundedCornerShape(14.dp)
                 ) {
@@ -448,13 +480,25 @@ fun DeviceSettingsScreen(
     }
 }
 
+private fun utf8Prefix(value: String, maxByteLength: Int): String {
+    val result = StringBuilder()
+    var byteCount = 0
+    value.forEach { character ->
+        val characterSize = character.toString().encodeToByteArray().size
+        if (byteCount + characterSize > maxByteLength) return result.toString()
+        result.append(character)
+        byteCount += characterSize
+    }
+    return result.toString()
+}
+
 @Composable
 fun SettingsSectionTitle(
     title: String
 ) {
     Text(
         text = title,
-        color = Color.White,
+        color = TextPrimary,
         fontWeight = FontWeight.Bold,
         fontSize = 16.sp
     )
@@ -470,9 +514,9 @@ fun OutputButton(
         modifier = Modifier
             .background(
                 if (selected)
-                    Color(0xFF6F95B9)
+                    Selected
                 else
-                    Color(0xFF242424),
+                    AppSurface,
                 RoundedCornerShape(12.dp)
             )
             .clickable {
@@ -489,9 +533,9 @@ fun OutputButton(
             text = title,
             color =
                 if (selected)
-                    Color.Black
+                    TextPrimary
                 else
-                    Color.White,
+                    TextPrimary,
             fontWeight = FontWeight.Bold
         )
     }
@@ -521,7 +565,7 @@ fun BrightnessGrid(
                         modifier = Modifier
                             .weight(1f)
                             .background(
-                                if (selected) Color(0xFF6F95B9) else Color(0xFF242424),
+                                if (selected) Selected else AppSurface,
                                 RoundedCornerShape(12.dp)
                             )
                             .clickable {
@@ -532,7 +576,7 @@ fun BrightnessGrid(
                     ) {
                         Text(
                             text = "$brightness%",
-                            color = if (selected) Color.Black else Color.White,
+                            color = TextPrimary,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -560,7 +604,7 @@ fun SoftDropdown(
                 .menuAnchor()
                 .fillMaxWidth()
                 .background(
-                    Color(0xFF242424),
+                    SurfaceElevated,
                     RoundedCornerShape(14.dp)
                 )
                 .clickable { expanded = true }
@@ -568,7 +612,7 @@ fun SoftDropdown(
         ) {
             Text(
                 text = selectedText,
-                color = Color.White,
+                color = TextPrimary,
                 fontWeight = FontWeight.Bold
             )
         }
@@ -576,14 +620,14 @@ fun SoftDropdown(
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            containerColor = Color(0xFF242424)
+            containerColor = SurfaceElevated
         ) {
             options.forEach { option ->
                 DropdownMenuItem(
                     text = {
                         Text(
                             text = option,
-                            color = Color.White
+                            color = TextPrimary
                         )
                     },
                     onClick = {

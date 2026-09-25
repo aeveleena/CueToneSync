@@ -2,49 +2,82 @@ package com.cuetone.cuetonesync.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cuetone.cuetonesync.ble.CueToneBleAdvertiser
+import com.cuetone.cuetonesync.ble.CueToneTransmission
 import com.cuetone.cuetonesync.ble.PacketFactory
+import com.cuetone.cuetonesync.data.DevicesRepository
 import com.cuetone.cuetonesync.data.PacketLogRepository
-import com.cuetone.cuetonesync.data.SlateRepository
+import com.cuetone.cuetonesync.data.local.CueToneDatabase
+import com.cuetone.cuetonesync.data.repository.SlateRepository
 import com.cuetone.cuetonesync.model.PacketLogEntry
 import com.cuetone.cuetonesync.permissions.BlePermissionManager
-import androidx.compose.material3.CheckboxDefaults
+import com.cuetone.cuetonesync.ui.theme.AppBackground
+import com.cuetone.cuetonesync.ui.theme.Border
+import com.cuetone.cuetonesync.ui.theme.Primary
+import com.cuetone.cuetonesync.ui.theme.SurfaceElevated
+import com.cuetone.cuetonesync.ui.theme.TextPrimary
+import com.cuetone.cuetonesync.ui.theme.TextSecondary
+import kotlinx.coroutines.launch
 
 @Composable
 fun SlateRecordEditScreen(
-    recordId: Int,
+    recordId: Long,
     onBackClick: () -> Unit
 ) {
-    // Получаем строку таблицы по идентификатору
-    // Если запись не найдена, экран не отображается
-    val record = SlateRepository.getRecordById(recordId) ?: return
-
     val context = LocalContext.current
+    val database = remember { CueToneDatabase.getDatabase(context) }
+    val slateRepository = remember { SlateRepository(database.slateRecordDao()) }
+    val record by slateRepository.observeRecord(recordId).collectAsState(initial = null)
+    val currentRecord = record ?: return
+    val table by database.logTableDao()
+        .observeTable(currentRecord.tableId)
+        .collectAsState(initial = null)
+    val targetClapper = DevicesRepository.getClapperBySerialOrFirst(
+        table?.clapperSerialNumber
+    )
+    val scope = rememberCoroutineScope()
     val bleAdvertiser = remember { CueToneBleAdvertiser(context) }
 
-    // pendingPacket используется, если перед отправкой нужно запросить BLE-разрешение
-    var pendingPacket by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingPacket by remember { mutableStateOf<CueToneTransmission?>(null) }
     var bleStatus by remember { mutableStateOf("") }
 
-    // Отправляет сформированный пакет №4 и добавляет запись в журнал пакетов
-    fun sendAndLogPacket(packet: ByteArray) {
+    fun sendAndLogPacket(packet: CueToneTransmission) {
         bleAdvertiser.sendPacket(packet) { status ->
-            val rawPacket = packet.joinToString(" ") {
-                "%02X".format(it)
-            }
+            val rawPacket = packet.toHexString()
 
             bleStatus = status
 
@@ -52,49 +85,37 @@ fun SlateRecordEditScreen(
                 timestamp = System.currentTimeMillis(),
                 direction = "OUT",
                 deviceName = "Clapper Slate Table",
-                packetType = "Packet #4 / Slate Record / ${packet.size} bytes",
-                status = "$status · ожидает подтверждения",
+                packetType = "Packet #4 / Slate Record / ${packet.logicalPayload.size} bytes / ${packet.fragmentCount} fragments",
+                status = status,
                 rawData = rawPacket
             )
 
             PacketLogRepository.addLog(logEntry)
-
-            // В демонстрационном режиме имитируется подтверждение обработки пакета
-            PacketLogRepository.simulateConfirmation(
-                logId = logEntry.id,
-                status = status
-            )
         }
     }
 
-    // Запрос разрешений BLE. После получения разрешения отправляется отложенный пакет
     val permissionLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { permissions ->
-            val granted = permissions.values.all { it }
-
-            if (granted) {
-                pendingPacket?.let { packet ->
-                    sendAndLogPacket(packet)
-                }
+            if (permissions.values.all { it }) {
+                pendingPacket?.let { packet -> sendAndLogPacket(packet) }
                 pendingPacket = null
             } else {
                 bleStatus = "BLE-разрешение отклонено"
             }
         }
 
-    // Редактируемые поля строки таблицы
-    var episode by remember { mutableStateOf(record.episode) }
-    var scene by remember { mutableStateOf(record.scene) }
-    var shot by remember { mutableStateOf(record.shot) }
-    var take by remember { mutableStateOf(record.take) }
-    var note by remember { mutableStateOf(record.note) }
-    var isGood by remember { mutableStateOf(record.isGood) }
+    var episode by remember(currentRecord.id) { mutableStateOf(currentRecord.episode) }
+    var scene by remember(currentRecord.id) { mutableStateOf(currentRecord.scene) }
+    var shot by remember(currentRecord.id) { mutableStateOf(currentRecord.shot) }
+    var take by remember(currentRecord.id) { mutableStateOf(currentRecord.take) }
+    var note by remember(currentRecord.id) { mutableStateOf(currentRecord.note) }
+    var isGood by remember(currentRecord.id) { mutableStateOf(currentRecord.isGood) }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF121212)
+        color = AppBackground
     ) {
         Column(
             modifier = Modifier
@@ -102,7 +123,6 @@ fun SlateRecordEditScreen(
                 .statusBarsPadding()
                 .padding(20.dp)
         ) {
-            // Верхняя панель экрана: возврат назад и номер дубля.
             Box(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center
@@ -115,8 +135,8 @@ fun SlateRecordEditScreen(
                 }
 
                 Text(
-                    text = "Дубль №${record.number}",
-                    color = Color.White,
+                    text = "Дубль №${currentRecord.number}",
+                    color = TextPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -130,72 +150,41 @@ fun SlateRecordEditScreen(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Таймкод и GPS-данные отображаются справочно
-                InfoText("Таймкод", record.timecode)
+                InfoText("Таймкод", currentRecord.timecode)
 
                 GpsInfoRow(
-                    latitude = record.latitude.toString(),
-                    longitude = record.longitude.toString(),
-                    gpsTime = record.gpsTime
+                    latitude = currentRecord.latitude.toString(),
+                    longitude = currentRecord.longitude.toString(),
+                    gpsTime = currentRecord.gpsTime
                 )
 
-                // Поля съёмочной информации, которые пользователь может изменить
-                SlateTextField(
-                    label = "Эпизод",
-                    value = episode,
-                    onValueChange = { episode = it }
-                )
+                SlateTextField("Эпизод", episode) { episode = it }
+                SlateTextField("Сцена", scene) { scene = it }
+                SlateTextField("Кадр", shot) { shot = it }
+                SlateTextField("Дубль", take) { take = it }
+                SlateTextField("Комментарий", note) { note = it }
 
-                SlateTextField(
-                    label = "Сцена",
-                    value = scene,
-                    onValueChange = { scene = it }
-                )
-
-                SlateTextField(
-                    label = "Кадр",
-                    value = shot,
-                    onValueChange = { shot = it }
-                )
-
-                SlateTextField(
-                    label = "Дубль",
-                    value = take,
-                    onValueChange = { take = it }
-                )
-
-                // Комментарий хранится только в приложении и не передаётся хлопушке
-                SlateTextField(
-                    label = "Комментарий",
-                    value = note,
-                    onValueChange = { note = it }
-                )
-
-                // Метка удачного дубля передаётся в пакет №4
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(
                         checked = isGood,
                         onCheckedChange = { isGood = it },
                         colors = CheckboxDefaults.colors(
-                            checkedColor = Color(0xFF6F95B9),
-                            uncheckedColor = Color.Gray,
-                            checkmarkColor = Color.White
+                            checkedColor = Primary,
+                            uncheckedColor = Border,
+                            checkmarkColor = TextPrimary
                         )
                     )
 
                     Text(
                         text = "Удачный дубль",
-                        color = Color.White
+                        color = TextPrimary
                     )
                 }
 
                 Button(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
-                        // Создаём обновлённую строку таблицы
-                        val updatedRecord = record.copy(
+                        val updatedRecord = currentRecord.copy(
                             episode = episode,
                             scene = scene,
                             shot = shot,
@@ -204,15 +193,21 @@ fun SlateRecordEditScreen(
                             isGood = isGood
                         )
 
-                        // Сохраняем изменения в локальном репозитории
-                        SlateRepository.updateRecord(updatedRecord)
+                        scope.launch {
+                            slateRepository.updateRecord(updatedRecord)
+                        }
 
-                        // Формируем пакет №4 для передачи изменённой строки хлопушке
-                        val packet =
-                            PacketFactory.buildSlateRecordPacket(updatedRecord)
+                        val clapper = targetClapper
+                        if (clapper == null) {
+                            bleStatus = "К таблице не привязана хлопушка"
+                            return@Button
+                        }
 
-                        // Если разрешение есть — отправляем сразу,
-                        // иначе сохраняем пакет и запрашиваем разрешение
+                        val packet = PacketFactory.buildSlateRecordPacket(
+                            record = updatedRecord,
+                            clapperDeviceId = clapper.id
+                        )
+
                         if (BlePermissionManager.hasBleAdvertisePermission(context)) {
                             sendAndLogPacket(packet)
                         } else {
@@ -225,8 +220,8 @@ fun SlateRecordEditScreen(
                         onBackClick()
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF6F95B9),
-                        contentColor = Color.White
+                        containerColor = Primary,
+                        contentColor = TextPrimary
                     )
                 ) {
                     Text("Сохранить")
@@ -235,7 +230,7 @@ fun SlateRecordEditScreen(
                 if (bleStatus.isNotBlank()) {
                     Text(
                         text = bleStatus,
-                        color = Color.LightGray
+                        color = TextSecondary
                     )
                 }
             }
@@ -243,7 +238,6 @@ fun SlateRecordEditScreen(
     }
 }
 
-// Компонент для отображения неизменяемого информационного поля
 @Composable
 fun InfoText(
     title: String,
@@ -252,19 +246,18 @@ fun InfoText(
     Column {
         Text(
             text = title,
-            color = Color.Gray,
+            color = TextSecondary,
             fontSize = 12.sp
         )
 
         Text(
             text = value,
-            color = Color.White,
+            color = TextPrimary,
             fontWeight = FontWeight.Bold
         )
     }
 }
 
-// Унифицированное поле ввода для редактируемых данных строки таблицы
 @Composable
 fun SlateTextField(
     label: String,
@@ -278,18 +271,19 @@ fun SlateTextField(
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
         colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = Color.White,
-            unfocusedTextColor = Color.White,
-            focusedBorderColor = Color(0xFF6F95B9),
-            unfocusedBorderColor = Color.Gray,
-            focusedLabelColor = Color(0xFF6F95B9),
-            unfocusedLabelColor = Color.Gray,
-            cursorColor = Color.White
+            focusedTextColor = TextPrimary,
+            unfocusedTextColor = TextPrimary,
+            focusedContainerColor = SurfaceElevated,
+            unfocusedContainerColor = SurfaceElevated,
+            focusedBorderColor = Primary,
+            unfocusedBorderColor = Border,
+            focusedLabelColor = Primary,
+            unfocusedLabelColor = TextSecondary,
+            cursorColor = Primary
         )
     )
 }
 
-// Отображает широту, долготу и GPS-время в одной строке
 @Composable
 fun GpsInfoRow(
     latitude: String,
@@ -300,39 +294,22 @@ fun GpsInfoRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        GpsInfoCell(
-            title = "Широта",
-            value = latitude,
-            modifier = Modifier.weight(1f)
-        )
-
-        GpsInfoCell(
-            title = "Долгота",
-            value = longitude,
-            modifier = Modifier.weight(1f)
-        )
-
-        GpsInfoCell(
-            title = "GPS-время",
-            value = gpsTime,
-            modifier = Modifier.weight(1f)
-        )
+        GpsInfoCell("Широта", latitude, Modifier.weight(1f))
+        GpsInfoCell("Долгота", longitude, Modifier.weight(1f))
+        GpsInfoCell("GPS-время", gpsTime, Modifier.weight(1f))
     }
 }
 
-// Ячейка справочной GPS-информации
 @Composable
 fun GpsInfoCell(
     title: String,
     value: String,
     modifier: Modifier = Modifier
 ) {
-    Column(
-        modifier = modifier
-    ) {
+    Column(modifier = modifier) {
         Text(
             text = title,
-            color = Color.Gray,
+            color = TextSecondary,
             fontSize = 12.sp,
             maxLines = 1
         )
@@ -341,7 +318,7 @@ fun GpsInfoCell(
 
         Text(
             text = value,
-            color = Color.White,
+            color = TextPrimary,
             fontWeight = FontWeight.Bold,
             fontSize = 13.sp,
             maxLines = 1

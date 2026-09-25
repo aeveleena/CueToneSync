@@ -1,6 +1,7 @@
 package com.cuetone.cuetonesync.ui.components
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
@@ -10,9 +11,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.cuetone.cuetonesync.ui.theme.*
 
 @Composable
 fun AddDeviceCard(
@@ -22,9 +23,10 @@ fun AddDeviceCard(
         modifier = Modifier
             .fillMaxWidth()
             .height(120.dp)
+            .border(1.dp, Border, RoundedCornerShape(20.dp))
             .clickable { onClick() },
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E1E1E)
+            containerColor = AppSurface
         ),
         shape = RoundedCornerShape(20.dp)
     ) {
@@ -34,7 +36,7 @@ fun AddDeviceCard(
         ) {
             Text(
                 text = "+ Добавить устройство",
-                color = Color(0xFF6F95B9),
+                color = Primary,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )

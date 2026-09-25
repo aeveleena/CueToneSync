@@ -8,10 +8,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.cuetone.cuetonesync.data.MockDevices
 import com.cuetone.cuetonesync.model.TimecodeDevice
 import com.cuetone.cuetonesync.ui.components.*
 import com.cuetone.cuetonesync.util.FRAME_DURATION_MS
@@ -22,34 +20,66 @@ import com.cuetone.cuetonesync.data.TimecodeRepository
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.ui.Alignment
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
 import com.cuetone.cuetonesync.ble.CueToneBleAdvertiser
+import com.cuetone.cuetonesync.ble.CueToneBleScanner
+import com.cuetone.cuetonesync.ble.CueToneTransmission
 import com.cuetone.cuetonesync.ble.PacketFactory
 import com.cuetone.cuetonesync.data.PacketLogRepository
 import com.cuetone.cuetonesync.model.DeviceRole
 import com.cuetone.cuetonesync.model.PacketLogEntry
 import com.cuetone.cuetonesync.permissions.BlePermissionManager
+import com.cuetone.cuetonesync.ui.theme.*
 
 @Composable
 fun DevicesScreen(
+    bleScanner: CueToneBleScanner,
     onDeviceClick: (Int) -> Unit,
-    onPacketLogClick: () -> Unit
+    onPacketLogClick: () -> Unit,
+    onProjectsClick: () -> Unit
 ) {
     val devices = DevicesRepository.devices
 
     val context = LocalContext.current
     val bleAdvertiser = remember { CueToneBleAdvertiser(context) }
+    var isScanning by remember { mutableStateOf(false) }
+    var scanStatus by remember { mutableStateOf("Нажмите «Искать снова»") }
+
+    val startDeviceScan = {
+        isScanning = true
+        bleScanner.startScan(
+            onDeviceFound = DevicesRepository::onGeneratorDiscovered,
+            onStatus = { status ->
+                scanStatus = status
+                isScanning = status == "Поиск генераторов..." || status == "Слушаем эфир CUETONE"
+            }
+        )
+    }
+
+    val scanPermissionLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permissions ->
+            if (permissions.values.all { it }) {
+                startDeviceScan()
+            } else {
+                isScanning = false
+                scanStatus = "Разрешение на поиск устройств отклонено"
+            }
+        }
 
     var pendingStatePackets by remember {
-        mutableStateOf<List<Pair<TimecodeDevice, ByteArray>>>(emptyList())
+        mutableStateOf<List<Pair<TimecodeDevice, CueToneTransmission>>>(emptyList())
     }
 
     fun buildStatePacket(
         device: TimecodeDevice
-    ): Pair<TimecodeDevice, ByteArray> {
+    ): Pair<TimecodeDevice, CueToneTransmission> {
         val packet = PacketFactory.buildDeviceStatePacket(
             device = device,
             currentFrame = TimecodeRepository.getDeviceFrame(device)
@@ -59,7 +89,7 @@ fun DevicesScreen(
     }
 
     fun sendAndLogStatePackets(
-        items: List<Pair<TimecodeDevice, ByteArray>>
+        items: List<Pair<TimecodeDevice, CueToneTransmission>>
     ) {
         if (items.isEmpty()) return
 
@@ -68,9 +98,7 @@ fun DevicesScreen(
         bleAdvertiser.sendPacketsSequentially(packets) { index, packet, status ->
             val targetDevice = items[index].first
 
-            val rawPacket = packet.joinToString(" ") {
-                "%02X".format(it)
-            }
+            val rawPacket = packet.toHexString()
 
             val packetName = if (targetDevice.type == "Clapper") {
                 "Packet #2 / Clapper Master role"
@@ -82,47 +110,35 @@ fun DevicesScreen(
                 timestamp = System.currentTimeMillis(),
                 direction = "OUT",
                 deviceName = targetDevice.name,
-                packetType = "$packetName / ${packet.size} bytes",
-                status = "$status · ожидает подтверждения",
+                packetType = "$packetName / target 0x%04X / ${packet.logicalPayload.size} bytes / ${packet.fragmentCount} fragments".format(packet.target),
+                status = status,
                 rawData = rawPacket
             )
 
             PacketLogRepository.addLog(logEntry)
-
-            PacketLogRepository.simulateConfirmation(
-                logId = logEntry.id,
-                status = status
-            )
         }
     }
 
     var pendingSyncPacket by remember {
-        mutableStateOf<ByteArray?>(null)
+        mutableStateOf<CueToneTransmission?>(null)
     }
 
     fun sendAndLogSyncPacket(
-        packet: ByteArray
+        packet: CueToneTransmission
     ) {
         bleAdvertiser.sendPacket(packet) { status ->
-            val rawPacket = packet.joinToString(" ") {
-                "%02X".format(it)
-            }
+            val rawPacket = packet.toHexString()
 
             val logEntry = PacketLogEntry(
                 timestamp = System.currentTimeMillis(),
                 direction = "OUT",
                 deviceName = "Channel Sync",
-                packetType = "Packet #3 / Sync / ${packet.size} bytes",
-                status = "$status · ожидает подтверждения",
+                packetType = "Packet #3 / Sync / target 0x%04X / ${packet.logicalPayload.size} bytes / ${packet.fragmentCount} fragments".format(packet.target),
+                status = status,
                 rawData = rawPacket
             )
 
             PacketLogRepository.addLog(logEntry)
-
-            PacketLogRepository.simulateConfirmation(
-                logId = logEntry.id,
-                status = status
-            )
         }
     }
 
@@ -155,6 +171,9 @@ fun DevicesScreen(
     }
 
     LaunchedEffect(Unit) {
+        if (BlePermissionManager.hasBleScanPermission(context)) {
+            startDeviceScan()
+        }
         while (true) {
             delay(FRAME_DURATION_MS)
             tick++
@@ -196,17 +215,15 @@ fun DevicesScreen(
         headerDevice?.fps?.frameRate ?: 25
     )
 
-    val masterFrame = TimecodeRepository.getMasterFrame()
-
     val headerFps = headerDevice?.fps?.title
 
-    val availableToAdd = MockDevices.availableDevices.filter { availableDevice ->
+    val availableToAdd = DevicesRepository.discoveredGenerators.filter { availableDevice ->
         devices.none { addedDevice -> addedDevice.id == availableDevice.id }
     }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF3C3F41)
+        color = AppBackground
     ) {
         Column(
             modifier = Modifier
@@ -236,7 +253,7 @@ fun DevicesScreen(
 
             Text(
                 text = "All Devices",
-                color = Color(0xFF6F95B9),
+                color = TextPrimary,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -308,7 +325,7 @@ fun DevicesScreen(
                                 }
                             }
 
-                            val packetsToSend = mutableListOf<Pair<TimecodeDevice, ByteArray>>()
+                            val packetsToSend = mutableListOf<Pair<TimecodeDevice, CueToneTransmission>>()
 
                             if (newMaster != null) {
                                 packetsToSend.add(
@@ -340,12 +357,21 @@ fun DevicesScreen(
                     AddDeviceCard(
                         onClick = {
                             showAddDialog = true
+                            if (BlePermissionManager.hasBleScanPermission(context)) {
+                                startDeviceScan()
+                            } else {
+                                scanStatus = "Нужно разрешение на поиск BLE-устройств"
+                                scanPermissionLauncher.launch(
+                                    BlePermissionManager.requiredScanPermissions()
+                                )
+                            }
                         }
                     )
                 }
             }
             BottomLogBar(
-                onPacketLogClick = onPacketLogClick
+                onPacketLogClick = onPacketLogClick,
+                onProjectsClick = onProjectsClick
             )
         }
     }
@@ -353,11 +379,22 @@ fun DevicesScreen(
     if (showAddDialog) {
         AddDeviceDialog(
             availableDevices = availableToAdd,
+            isScanning = isScanning,
+            scanStatus = scanStatus,
             onDismiss = {
                 showAddDialog = false
             },
+            onScanAgain = {
+                if (BlePermissionManager.hasBleScanPermission(context)) {
+                    startDeviceScan()
+                } else {
+                    scanPermissionLauncher.launch(
+                        BlePermissionManager.requiredScanPermissions()
+                    )
+                }
+            },
             onDeviceSelected = { selected ->
-                devices.add(selected.copy(role = com.cuetone.cuetonesync.model.DeviceRole.SLAVE))
+                DevicesRepository.addDiscoveredGenerator(selected)
                 showAddDialog = false
             }
         )
@@ -376,7 +413,10 @@ fun DevicesScreen(
                 val updatedDevices = devices.map { device ->
                     if (device.channel == selectedChannel) {
                         device.copy(
-                            frameOffset = masterCurrentFrame - TimecodeRepository.getMasterFrame(),
+                            frameOffset = masterCurrentFrame - TimecodeRepository.getMasterFrame(
+                                selectedMaster.fps.frameRate
+                            ),
+                            fps = selectedMaster.fps,
                             role =
                                 if (device.id == selectedMaster.id) {
                                     DeviceRole.MASTER
@@ -427,7 +467,7 @@ fun DevicesScreen(
                 showManualSyncDialog = false
             },
             onSync = { targetFrame, selectedFps, selectedChannel, selectedMaster, userBit ->
-                val baseFrame = TimecodeRepository.getMasterFrame()
+                val baseFrame = TimecodeRepository.getMasterFrame(selectedFps.frameRate)
 
                 val updatedDevices = devices.map { device ->
                     if (device.channel == selectedChannel) {
@@ -481,7 +521,8 @@ fun DevicesScreen(
 
 @Composable
 fun BottomLogBar(
-    onPacketLogClick: () -> Unit
+    onPacketLogClick: () -> Unit,
+    onProjectsClick: () -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -490,14 +531,25 @@ fun BottomLogBar(
             .padding(end = 16.dp, bottom = 8.dp),
         contentAlignment = Alignment.CenterEnd
     ) {
-        IconButton(
-            onClick = onPacketLogClick
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "☰",
-                color = Color.LightGray,
-                style = MaterialTheme.typography.headlineSmall
-            )
+            IconButton(onClick = onProjectsClick) {
+                Icon(
+                    imageVector = Icons.Default.FolderOpen,
+                    contentDescription = "Проекты",
+                    tint = Primary
+                )
+            }
+
+            IconButton(onClick = onPacketLogClick) {
+                Text(
+                    text = "☰",
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.headlineSmall
+                )
+            }
         }
     }
 }

@@ -9,13 +9,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cuetone.cuetonesync.R
 import com.cuetone.cuetonesync.ble.CueToneBleAdvertiser
+import com.cuetone.cuetonesync.ble.CueToneTransmission
 import com.cuetone.cuetonesync.ble.PacketFactory
 import com.cuetone.cuetonesync.data.DevicesRepository
 import com.cuetone.cuetonesync.data.PacketLogRepository
@@ -25,6 +25,7 @@ import com.cuetone.cuetonesync.permissions.BlePermissionManager
 import com.cuetone.cuetonesync.util.FRAME_DURATION_MS
 import com.cuetone.cuetonesync.util.formatTimecode
 import kotlinx.coroutines.delay
+import com.cuetone.cuetonesync.ui.theme.*
 
 @Composable
 fun ClapperDetailsScreen(
@@ -39,16 +40,14 @@ fun ClapperDetailsScreen(
     val bleAdvertiser = remember { CueToneBleAdvertiser(context) }
 
     var bleStatus by remember { mutableStateOf("") }
-    var pendingPacket by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingPacket by remember { mutableStateOf<CueToneTransmission?>(null) }
 
     fun sendAndLogPacket(
-        packet: ByteArray,
+        packet: CueToneTransmission,
         actionName: String
     ) {
         bleAdvertiser.sendPacket(packet) { status ->
-            val rawPacket = packet.joinToString(" ") {
-                "%02X".format(it)
-            }
+            val rawPacket = packet.toHexString()
 
             bleStatus = status
 
@@ -56,17 +55,12 @@ fun ClapperDetailsScreen(
                 timestamp = System.currentTimeMillis(),
                 direction = "OUT",
                 deviceName = device.name,
-                packetType = "Packet #2 / $actionName / ${packet.size} bytes",
-                status = "$status · ожидает подтверждения",
+                packetType = "Packet #2 / $actionName / ${packet.logicalPayload.size} bytes / ${packet.fragmentCount} fragments",
+                status = status,
                 rawData = rawPacket
             )
 
             PacketLogRepository.addLog(logEntry)
-
-            PacketLogRepository.simulateConfirmation(
-                logId = logEntry.id,
-                status = status
-            )
         }
     }
 
@@ -90,7 +84,7 @@ fun ClapperDetailsScreen(
         }
 
     fun sendClapperState(
-        packet: ByteArray,
+        packet: CueToneTransmission,
         actionName: String
     ) {
         if (BlePermissionManager.hasBleAdvertisePermission(context)) {
@@ -121,7 +115,7 @@ fun ClapperDetailsScreen(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF121212)
+        color = AppBackground
     ) {
         Column(
             modifier = Modifier
@@ -143,7 +137,7 @@ fun ClapperDetailsScreen(
 
                     Text(
                         text = device.name,
-                        color = Color.White,
+                        color = TextPrimary,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -165,7 +159,7 @@ fun ClapperDetailsScreen(
                         Icon(
                             painter = painterResource(id = R.drawable.ic_settings),
                             contentDescription = "Настройки",
-                            tint = Color(0xFF6F95B9),
+                            tint = Primary,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -194,7 +188,7 @@ fun ClapperDetailsScreen(
             ) {
                 Text(
                     text = formatTimecode(currentFrame, device.fps.frameRate),
-                    color = Color.White,
+                    color = TextPrimary,
                     style = MaterialTheme.typography.displayMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -225,7 +219,10 @@ fun ClapperDetailsScreen(
                     modifier = Modifier.weight(1f),
                     onClick = {
                         val updatedDevice = device.copy(
-                            frameOffset = TimecodeRepository.offsetForTargetFrame(0)
+                            frameOffset = TimecodeRepository.offsetForTargetFrame(
+                                targetFrame = 0,
+                                frameRate = device.fps.frameRate
+                            )
                         )
 
                         DevicesRepository.updateDevice(updatedDevice)
@@ -241,7 +238,8 @@ fun ClapperDetailsScreen(
                         )
                     },
                     colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = Color.White
+                        containerColor = SurfaceElevated,
+                        contentColor = TextPrimary
                     ),
                     shape = RoundedCornerShape(14.dp)
                 ) {
@@ -264,7 +262,7 @@ fun ClapperDetailsScreen(
 
                 Text(
                     text = bleStatus,
-                    color = Color.LightGray
+                    color = TextSecondary
                 )
             }
         }

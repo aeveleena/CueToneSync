@@ -10,7 +10,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -18,6 +17,7 @@ import com.cuetone.cuetonesync.model.DeviceChannel
 import com.cuetone.cuetonesync.model.FpsOption
 import com.cuetone.cuetonesync.model.TimecodeDevice
 import com.cuetone.cuetonesync.model.defaultUserBit
+import com.cuetone.cuetonesync.ui.theme.*
 
 @Composable
 fun ManualSyncDialog(
@@ -51,11 +51,11 @@ fun ManualSyncDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF242424),
+        containerColor = AppSurface,
         title = {
             Text(
                 text = "Ручная настройка таймкода",
-                color = Color.White,
+                color = TextPrimary,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -109,11 +109,13 @@ fun ManualSyncDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color(0xFF6F95B9),
-                        unfocusedBorderColor = Color.Gray,
-                        cursorColor = Color.White
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = Primary,
+                        unfocusedBorderColor = Border,
+                        cursorColor = Primary,
+                        focusedContainerColor = SurfaceElevated,
+                        unfocusedContainerColor = SurfaceElevated
                     )
                 )
 
@@ -147,8 +149,9 @@ fun ManualSyncDialog(
                     }
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF6F95B9),
-                    contentColor = Color.White
+                    containerColor = Primary,
+                    contentColor = TextPrimary,
+                    disabledContainerColor = TextDisabled
                 )
             ) {
                 Text("Синхронизировать")
@@ -158,7 +161,7 @@ fun ManualSyncDialog(
             TextButton(onClick = onDismiss) {
                 Text(
                     text = "Отмена",
-                    color = Color(0xFF6F95B9)
+                    color = Primary
                     )
             }
         }
@@ -171,7 +174,7 @@ fun DialogSectionTitle(
 ) {
     Text(
         text = title,
-        color = Color.White,
+        color = TextPrimary,
         fontWeight = FontWeight.Bold
     )
 }
@@ -196,13 +199,15 @@ fun SoftTimecodeField(
         modifier = modifier,
         singleLine = true,
         colors = OutlinedTextFieldDefaults.colors(
-            focusedTextColor = Color.White,
-            unfocusedTextColor = Color.White,
-            focusedBorderColor = Color(0xFF6F95B9),
-            unfocusedBorderColor = Color.Gray,
-            focusedLabelColor = Color(0xFF6F95B9),
-            unfocusedLabelColor = Color.Gray,
-            cursorColor = Color.White
+            focusedTextColor = TextPrimary,
+            unfocusedTextColor = TextPrimary,
+            focusedBorderColor = Primary,
+            unfocusedBorderColor = Border,
+            focusedLabelColor = Primary,
+            unfocusedLabelColor = TextSecondary,
+            cursorColor = Primary,
+            focusedContainerColor = SurfaceElevated,
+            unfocusedContainerColor = SurfaceElevated
         )
     )
 }
@@ -226,7 +231,7 @@ fun FpsGrid(
                         modifier = Modifier
                             .weight(1f)
                             .background(
-                                if (selected) Color(0xFF6F95B9) else Color(0xFF303030),
+                                if (selected) Selected else SurfaceElevated,
                                 RoundedCornerShape(12.dp)
                             )
                             .clickable { onFpsSelected(fps) }
@@ -235,7 +240,7 @@ fun FpsGrid(
                     ) {
                         Text(
                             text = fps.title,
-                            color = Color.White,
+                            color = TextPrimary,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp
                         )
@@ -270,26 +275,28 @@ fun ManualSoftDropdown(
                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             },
             colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                focusedBorderColor = Color(0xFF6F95B9),
-                unfocusedBorderColor = Color.Gray,
-                focusedLabelColor = Color(0xFF6F95B9),
-                unfocusedLabelColor = Color.Gray
+                focusedTextColor = TextPrimary,
+                unfocusedTextColor = TextPrimary,
+                focusedBorderColor = Primary,
+                unfocusedBorderColor = Border,
+                focusedLabelColor = Primary,
+                unfocusedLabelColor = TextSecondary,
+                focusedContainerColor = SurfaceElevated,
+                unfocusedContainerColor = SurfaceElevated
             )
         )
 
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            containerColor = Color(0xFF242424)
+            containerColor = SurfaceElevated
         ) {
             options.forEach { option ->
                 DropdownMenuItem(
                     text = {
                         Text(
                             text = option,
-                            color = Color.White
+                            color = TextPrimary
                         )
                     },
                     onClick = {

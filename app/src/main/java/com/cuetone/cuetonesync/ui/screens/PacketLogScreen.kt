@@ -7,11 +7,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cuetone.cuetonesync.data.PacketLogRepository
+import com.cuetone.cuetonesync.ui.theme.AppBackground
+import com.cuetone.cuetonesync.ui.theme.AppSurface
+import com.cuetone.cuetonesync.ui.theme.TextDisabled
+import com.cuetone.cuetonesync.ui.theme.TextPrimary
+import com.cuetone.cuetonesync.ui.theme.TextSecondary
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -23,7 +27,7 @@ fun PacketLogScreen(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF121212)
+        color = AppBackground
     ) {
         Column(
             modifier = Modifier
@@ -44,7 +48,7 @@ fun PacketLogScreen(
 
                 Text(
                     text = "Журнал BLE-пакетов",
-                    color = Color.White,
+                    color = TextPrimary,
                     fontSize = 18.sp,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
@@ -59,7 +63,7 @@ fun PacketLogScreen(
                 items(PacketLogRepository.logs) { log ->
                     Card(
                         colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFF242424)
+                            containerColor = AppSurface
                         )
                     ) {
                         Column(
@@ -67,28 +71,28 @@ fun PacketLogScreen(
                         ) {
                             Text(
                                 text = "${formatter.format(Date(log.timestamp))} · ${log.direction}",
-                                color = Color.LightGray
+                                color = TextSecondary
                             )
 
                             Text(
                                 text = log.packetType,
-                                color = Color.White,
+                                color = TextPrimary,
                                 fontWeight = FontWeight.Bold
                             )
 
                             Text(
                                 text = log.deviceName,
-                                color = Color.LightGray
+                                color = TextSecondary
                             )
 
                             Text(
                                 text = log.status,
-                                color = Color.LightGray
+                                color = TextSecondary
                             )
 
                             Text(
                                 text = log.rawData,
-                                color = Color.Gray,
+                                color = TextDisabled,
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
