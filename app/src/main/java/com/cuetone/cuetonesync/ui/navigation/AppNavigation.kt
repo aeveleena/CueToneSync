@@ -8,6 +8,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.cuetone.cuetonesync.data.DevicesRepository
+import com.cuetone.cuetonesync.data.PacketLogRepository
+import com.cuetone.cuetonesync.data.local.CueToneDatabase
+import com.cuetone.cuetonesync.data.repository.ClapperBeaconImportResult
+import com.cuetone.cuetonesync.data.repository.ClapperLogImportRepository
 import com.cuetone.cuetonesync.ble.CueToneBleScanner
 import com.cuetone.cuetonesync.ble.CueToneBleRadioCoordinator
 import com.cuetone.cuetonesync.ui.screens.ClapperDetailsScreen
@@ -19,12 +23,18 @@ import com.cuetone.cuetonesync.ui.screens.SlateRecordEditScreen
 import com.cuetone.cuetonesync.ui.screens.SlateTableScreen
 import com.cuetone.cuetonesync.ui.screens.projects.ProjectExplorerScreen
 import com.cuetone.cuetonesync.ui.screens.projects.ProjectsScreen
+import com.cuetone.cuetonesync.model.PacketLogEntry
+import kotlinx.coroutines.launch
 
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()
     val context = LocalContext.current
     val bleScanner = remember { CueToneBleScanner(context.applicationContext) }
+    val clapperLogRepository = remember {
+        ClapperLogImportRepository(CueToneDatabase.getDatabase(context))
+    }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     DisposableEffect(bleScanner) {
         CueToneBleRadioCoordinator.registerScanner(bleScanner)
@@ -101,6 +111,34 @@ fun AppNavigation() {
                 },
                 onProjectsClick = {
                     navController.navigate("projects")
+                },
+                onClapperBeacon = { beacon, timecode ->
+                    scope.launch {
+                        val result = clapperLogRepository.importBeacon(
+                            clapperSerialNumber = "CLP-%04X".format(beacon.deviceId),
+                            beacon = beacon,
+                            timecode = timecode
+                        )
+                        if (result != ClapperBeaconImportResult.DUPLICATE) {
+                            PacketLogRepository.addLog(
+                                PacketLogEntry(
+                                    timestamp = System.currentTimeMillis(),
+                                    direction = "IN",
+                                    deviceName = "Clapper %04X".format(beacon.deviceId),
+                                    packetType = "Camera ${'A' + beacon.cameraIndex} table route",
+                                    status = when (result) {
+                                        ClapperBeaconImportResult.IMPORTED -> "Строка сохранена"
+                                        ClapperBeaconImportResult.MARKED_GOOD -> "Дубль отмечен хорошим"
+                                        ClapperBeaconImportResult.NO_ROUTE -> "Таблица камеры не назначена"
+                                        ClapperBeaconImportResult.NO_MATCHING_RECORD ->
+                                            "Не найдена строка для отметки OK"
+                                        ClapperBeaconImportResult.DUPLICATE -> "Повтор пакета"
+                                    },
+                                    rawData = "seq=${beacon.sequence}"
+                                )
+                            )
+                        }
+                    }
                 }
             )
         }
@@ -131,6 +169,9 @@ fun AppNavigation() {
                     },
                     onSlateTableClick = {
                         navController.navigate("projects")
+                    },
+                    onImportedTableClick = { tableId ->
+                        navController.navigate("slate_table/$tableId")
                     }
                 )
             }

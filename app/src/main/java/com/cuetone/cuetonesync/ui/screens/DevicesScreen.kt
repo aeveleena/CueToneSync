@@ -1,8 +1,11 @@
 package com.cuetone.cuetonesync.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -10,10 +13,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.cuetone.cuetonesync.model.TimecodeDevice
 import com.cuetone.cuetonesync.ui.components.*
 import com.cuetone.cuetonesync.util.FRAME_DURATION_MS
-import com.cuetone.cuetonesync.util.formatTimecode
 import kotlinx.coroutines.delay
 import com.cuetone.cuetonesync.data.DevicesRepository
 import com.cuetone.cuetonesync.data.TimecodeRepository
@@ -21,27 +24,37 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
 import com.cuetone.cuetonesync.ble.CueToneBleAdvertiser
 import com.cuetone.cuetonesync.ble.CueToneBleScanner
 import com.cuetone.cuetonesync.ble.CueToneTransmission
+import com.cuetone.cuetonesync.ble.ClapperLogBeacon
 import com.cuetone.cuetonesync.ble.PacketFactory
 import com.cuetone.cuetonesync.data.PacketLogRepository
 import com.cuetone.cuetonesync.model.DeviceRole
+import com.cuetone.cuetonesync.model.DeviceChannel
 import com.cuetone.cuetonesync.model.PacketLogEntry
 import com.cuetone.cuetonesync.permissions.BlePermissionManager
 import com.cuetone.cuetonesync.ui.theme.*
+import com.cuetone.cuetonesync.util.splitFrames
 
 @Composable
 fun DevicesScreen(
     bleScanner: CueToneBleScanner,
     onDeviceClick: (Int) -> Unit,
     onPacketLogClick: () -> Unit,
-    onProjectsClick: () -> Unit
+    onProjectsClick: () -> Unit,
+    onClapperBeacon: (ClapperLogBeacon, String) -> Unit
 ) {
     val devices = DevicesRepository.devices
 
@@ -50,14 +63,43 @@ fun DevicesScreen(
     var isScanning by remember { mutableStateOf(false) }
     var scanStatus by remember { mutableStateOf("Нажмите «Искать снова»") }
 
-    val startDeviceScan = {
+    val startDeviceScan = { forceRestart: Boolean ->
         isScanning = true
         bleScanner.startScan(
-            onDeviceFound = DevicesRepository::onGeneratorDiscovered,
+            onDeviceFound = DevicesRepository::onDeviceDiscovered,
             onStatus = { status ->
                 scanStatus = status
-                isScanning = status == "Поиск генераторов..." || status == "Слушаем эфир CUETONE"
-            }
+                isScanning = status == "Поиск устройств..." ||
+                    status == "Слушаем эфир CUETONE" ||
+                    status == "Перезапускаем BLE-сканирование..."
+            },
+            onClapperBeacon = beaconHandler@ { beacon ->
+                if (!DevicesRepository.onClapperBeacon(beacon)) {
+                    return@beaconHandler
+                }
+
+                val clapper = DevicesRepository.getDeviceById(beacon.deviceId)
+                val timecode = if (clapper != null) {
+                    val current = splitFrames(
+                        TimecodeRepository.getDeviceFrame(clapper),
+                        clapper.fps.frameRate
+                    )
+                    "%02d:%02d:%02d.%02d".format(
+                        current.hours,
+                        current.minutes,
+                        beacon.timecodeSeconds,
+                        beacon.timecodeFrames
+                    )
+                } else {
+                    "00:00:%02d.%02d".format(
+                        beacon.timecodeSeconds,
+                        beacon.timecodeFrames
+                    )
+                }
+
+                onClapperBeacon(beacon, timecode)
+            },
+            forceRestart = forceRestart
         )
     }
 
@@ -66,7 +108,7 @@ fun DevicesScreen(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { permissions ->
             if (permissions.values.all { it }) {
-                startDeviceScan()
+                startDeviceScan(false)
             } else {
                 isScanning = false
                 scanStatus = "Разрешение на поиск устройств отклонено"
@@ -101,7 +143,7 @@ fun DevicesScreen(
             val rawPacket = packet.toHexString()
 
             val packetName = if (targetDevice.type == "Clapper") {
-                "Packet #2 / Clapper Master role"
+                "Individual V2 / Clapper Master role"
             } else {
                 "Packet #1 / Generator Master role"
             }
@@ -119,20 +161,23 @@ fun DevicesScreen(
         }
     }
 
-    var pendingSyncPacket by remember {
-        mutableStateOf<CueToneTransmission?>(null)
+    var pendingSyncPackets by remember {
+        mutableStateOf<List<Pair<DeviceChannel, CueToneTransmission>>>(emptyList())
     }
 
-    fun sendAndLogSyncPacket(
-        packet: CueToneTransmission
+    fun sendAndLogSyncPackets(
+        items: List<Pair<DeviceChannel, CueToneTransmission>>
     ) {
-        bleAdvertiser.sendPacket(packet) { status ->
+        if (items.isEmpty()) return
+
+        bleAdvertiser.sendPacketsSequentially(items.map { it.second }) { index, packet, status ->
             val rawPacket = packet.toHexString()
+            val channel = items[index].first
 
             val logEntry = PacketLogEntry(
                 timestamp = System.currentTimeMillis(),
                 direction = "OUT",
-                deviceName = "Channel Sync",
+                deviceName = "Channel ${channel.name} Sync",
                 packetType = "Packet #3 / Sync / target 0x%04X / ${packet.logicalPayload.size} bytes / ${packet.fragmentCount} fragments".format(packet.target),
                 status = status,
                 rawData = rawPacket
@@ -152,10 +197,8 @@ fun DevicesScreen(
                 sendAndLogStatePackets(pendingStatePackets)
                 pendingStatePackets = emptyList()
 
-                pendingSyncPacket?.let { packet ->
-                    sendAndLogSyncPacket(packet)
-                }
-                pendingSyncPacket = null
+                sendAndLogSyncPackets(pendingSyncPackets)
+                pendingSyncPackets = emptyList()
             }
         }
 
@@ -164,15 +207,12 @@ fun DevicesScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var showMasterDialog by remember { mutableStateOf(false) }
     var showManualSyncDialog by remember { mutableStateOf(false) }
-    var selectedDevice by remember { mutableStateOf<TimecodeDevice?>(null) }
-
-    var selectedHeaderChannel by remember {
-        mutableStateOf(devices.firstOrNull()?.channel)
-    }
+    var selectedFilterChannel by remember { mutableStateOf<DeviceChannel?>(null) }
+    val collapsedChannels = remember { mutableStateMapOf<DeviceChannel, Boolean>() }
 
     LaunchedEffect(Unit) {
         if (BlePermissionManager.hasBleScanPermission(context)) {
-            startDeviceScan()
+            startDeviceScan(false)
         }
         while (true) {
             delay(FRAME_DURATION_MS)
@@ -182,196 +222,199 @@ fun DevicesScreen(
 
     val hasDevices = devices.isNotEmpty()
 
-    LaunchedEffect(devices.size) {
-        if (selectedHeaderChannel == null && devices.isNotEmpty()) {
-            selectedHeaderChannel = devices.first().channel
-        }
+    val availableChannels = devices.map { it.channel }.distinct().sortedBy { it.ordinal }
+    val visibleChannels = selectedFilterChannel?.let { listOf(it) } ?: availableChannels
 
-        if (
-            selectedHeaderChannel != null &&
-            devices.none { it.channel == selectedHeaderChannel }
-        ) {
-            selectedHeaderChannel = devices.firstOrNull()?.channel
+    LaunchedEffect(availableChannels) {
+        if (selectedFilterChannel != null && selectedFilterChannel !in availableChannels) {
+            selectedFilterChannel = null
         }
     }
 
-    val selectedChannelDevices = devices.filter {
-        it.channel == selectedHeaderChannel
+    fun syncChannels(channels: List<DeviceChannel>) {
+        if (channels.isEmpty()) return
+
+        var updatedDevices = devices.toList()
+        val packets = mutableListOf<Pair<DeviceChannel, CueToneTransmission>>()
+
+        channels.forEach { channel ->
+            val channelDevices = updatedDevices.filter { it.channel == channel }
+            val master = channelDevices.firstOrNull { it.role == DeviceRole.MASTER }
+                ?: channelDevices.firstOrNull()
+                ?: return@forEach
+            val targetFrame = TimecodeRepository.getDeviceFrame(master)
+            val baseFrame = TimecodeRepository.getMasterFrame(master.fps.frameRate)
+
+            updatedDevices = updatedDevices.map { device ->
+                if (device.channel == channel) {
+                    device.copy(
+                        frameOffset = targetFrame - baseFrame,
+                        fps = master.fps,
+                        role = if (device.id == master.id) DeviceRole.MASTER else DeviceRole.SLAVE
+                    )
+                } else {
+                    device
+                }
+            }
+
+            val syncedChannelDevices = updatedDevices.filter { it.channel == channel }
+            val syncedMaster = syncedChannelDevices.first { it.id == master.id }
+            packets += channel to PacketFactory.buildSyncPacket(
+                devicesInChannel = syncedChannelDevices,
+                masterDevice = syncedMaster,
+                targetFrame = targetFrame,
+                fps = syncedMaster.fps,
+                userBit = syncedMaster.userBit
+            )
+        }
+
+        devices.clear()
+        devices.addAll(updatedDevices)
+
+        if (BlePermissionManager.hasBleAdvertisePermission(context)) {
+            sendAndLogSyncPackets(packets)
+        } else {
+            pendingSyncPackets = packets
+            permissionLauncher.launch(BlePermissionManager.requiredPermissions())
+        }
     }
 
-    val headerDevice =
-        selectedChannelDevices.firstOrNull { it.role == DeviceRole.MASTER }
-            ?: selectedChannelDevices.firstOrNull()
-            ?: devices.firstOrNull()
-
-    val headerFrame = tick.let {
-        headerDevice?.let { device ->
-            TimecodeRepository.getDeviceFrame(device)
-        } ?: 0
-    }
-
-    val headerTimecode = formatTimecode(
-        headerFrame,
-        headerDevice?.fps?.frameRate ?: 25
-    )
-
-    val headerFps = headerDevice?.fps?.title
-
-    val availableToAdd = DevicesRepository.discoveredGenerators.filter { availableDevice ->
+    val availableToAdd = DevicesRepository.discoveredDevices.filter { availableDevice ->
         devices.none { addedDevice -> addedDevice.id == availableDevice.id }
+    }
+
+    fun deleteDevice(device: TimecodeDevice) {
+        val deletedWasMaster = device.role == DeviceRole.MASTER
+        devices.remove(device)
+
+        if (deletedWasMaster) {
+            val newMaster = devices.firstOrNull { it.channel == device.channel } ?: return
+            devices.replaceAll { current ->
+                if (current.channel == device.channel) {
+                    current.copy(
+                        role = if (current.id == newMaster.id) DeviceRole.MASTER else DeviceRole.SLAVE
+                    )
+                } else {
+                    current
+                }
+            }
+        }
+    }
+
+    fun makeMaster(device: TimecodeDevice) {
+        val oldMaster = devices.firstOrNull {
+            it.channel == device.channel && it.role == DeviceRole.MASTER && it.id != device.id
+        }
+        val updatedDevices = devices.map { currentDevice ->
+            if (currentDevice.channel == device.channel) {
+                currentDevice.copy(
+                    role = if (currentDevice.id == device.id) DeviceRole.MASTER else DeviceRole.SLAVE
+                )
+            } else {
+                currentDevice
+            }
+        }
+
+        devices.clear()
+        devices.addAll(updatedDevices)
+
+        val packetsToSend = listOfNotNull(
+            updatedDevices.firstOrNull { it.id == device.id }?.let(::buildStatePacket),
+            oldMaster?.let { previous ->
+                updatedDevices.firstOrNull { it.id == previous.id }?.let(::buildStatePacket)
+            }
+        )
+
+        if (packetsToSend.isNotEmpty()) {
+            if (BlePermissionManager.hasBleAdvertisePermission(context)) {
+                sendAndLogStatePackets(packetsToSend)
+            } else {
+                pendingStatePackets = packetsToSend
+                permissionLauncher.launch(BlePermissionManager.requiredPermissions())
+            }
+        }
+    }
+
+    fun openAddDeviceDialog() {
+        showAddDialog = true
+        if (BlePermissionManager.hasBleScanPermission(context)) {
+            startDeviceScan(false)
+        } else {
+            scanStatus = "Нужно разрешение на поиск BLE-устройств"
+            scanPermissionLauncher.launch(BlePermissionManager.requiredScanPermissions())
+        }
     }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = AppBackground
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .padding(20.dp)
-        ) {
-            if (hasDevices) {
-                TimecodeHeader(
-                    mainTimecode = headerTimecode,
-                    fps = headerFps,
-                    selectedChannel = selectedHeaderChannel,
-                    availableChannels = devices.map { it.channel }.distinct(),
-                    onChannelSelected = { channel ->
-                        selectedHeaderChannel = channel
-                    },
-                    onSyncAllClick = {
-                        showMasterDialog = true
-                    },
-                    onManualSyncClick = {
-                        showManualSyncDialog = true
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-
-            Text(
-                text = "All Devices",
-                color = TextPrimary,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .padding(top = 20.dp)
             ) {
-                items(devices) { device ->
-                    DeviceCard(
-                        device = device,
-                        currentFrame = tick.let {
-                            TimecodeRepository.getDeviceFrame(device)
-                        },
-                        onClick = {
-                            onDeviceClick(device.id)
-                        },
-                        onRenameClick = {
-                            selectedDevice = device
-                        },
-                        onDeleteClick = {
-                            val deletedWasMaster = device.role == com.cuetone.cuetonesync.model.DeviceRole.MASTER
-
-                            devices.remove(device)
-
-                            if (deletedWasMaster && devices.isNotEmpty()) {
-                                val newMaster = devices.first()
-
-                                devices.replaceAll {
-                                    if (it.id == newMaster.id) {
-                                        it.copy(role = com.cuetone.cuetonesync.model.DeviceRole.MASTER)
-                                    } else {
-                                        it.copy(role = com.cuetone.cuetonesync.model.DeviceRole.SLAVE)
-                                    }
-                                }
-                            }
-                        },
-                        onMakeMasterClick = {
-                            val oldMaster = devices.firstOrNull {
-                                it.channel == device.channel &&
-                                        it.role == DeviceRole.MASTER &&
-                                        it.id != device.id
-                            }
-
-                            val updatedDevices = devices.map { currentDevice ->
-                                if (currentDevice.channel == device.channel) {
-                                    if (currentDevice.id == device.id) {
-                                        currentDevice.copy(role = DeviceRole.MASTER)
-                                    } else {
-                                        currentDevice.copy(role = DeviceRole.SLAVE)
-                                    }
-                                } else {
-                                    currentDevice
-                                }
-                            }
-
-                            devices.clear()
-                            devices.addAll(updatedDevices)
-
-                            val newMaster = updatedDevices.firstOrNull {
-                                it.id == device.id
-                            }
-
-                            val updatedOldMaster = oldMaster?.let { previousMaster ->
-                                updatedDevices.firstOrNull {
-                                    it.id == previousMaster.id
-                                }
-                            }
-
-                            val packetsToSend = mutableListOf<Pair<TimecodeDevice, CueToneTransmission>>()
-
-                            if (newMaster != null) {
-                                packetsToSend.add(
-                                    buildStatePacket(newMaster)
-                                )
-                            }
-
-                            if (updatedOldMaster != null) {
-                                packetsToSend.add(
-                                    buildStatePacket(updatedOldMaster)
-                                )
-                            }
-
-                            if (packetsToSend.isNotEmpty()) {
-                                if (BlePermissionManager.hasBleAdvertisePermission(context)) {
-                                    sendAndLogStatePackets(packetsToSend)
-                                } else {
-                                    pendingStatePackets = packetsToSend
-                                    permissionLauncher.launch(
-                                        BlePermissionManager.requiredPermissions()
-                                    )
-                                }
-                            }
-                        }
+                if (hasDevices) {
+                    DevicesToolbar(
+                        selectedChannel = selectedFilterChannel,
+                        availableChannels = availableChannels,
+                        onChannelSelected = { selectedFilterChannel = it },
+                        onSyncAllClick = { showMasterDialog = true },
+                        onManualSyncClick = { showManualSyncDialog = true },
+                        modifier = Modifier.padding(horizontal = 20.dp)
                     )
+
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
 
-                item {
-                    AddDeviceCard(
-                        onClick = {
-                            showAddDialog = true
-                            if (BlePermissionManager.hasBleScanPermission(context)) {
-                                startDeviceScan()
-                            } else {
-                                scanStatus = "Нужно разрешение на поиск BLE-устройств"
-                                scanPermissionLauncher.launch(
-                                    BlePermissionManager.requiredScanPermissions()
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentPadding = PaddingValues(
+                        start = 20.dp,
+                        end = 20.dp,
+                        bottom = 112.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(visibleChannels, key = { it.name }) { channel ->
+                        val channelDevices = devices.filter { it.channel == channel }
+                        ChannelSection(
+                            channel = channel,
+                            devices = channelDevices,
+                            expanded = collapsedChannels[channel] != true,
+                            onToggle = {
+                                collapsedChannels[channel] = collapsedChannels[channel] != true
+                            },
+                            onSync = { syncChannels(listOf(channel)) },
+                            deviceContent = { device ->
+                                DeviceCard(
+                                    device = device,
+                                    currentFrame = tick.let {
+                                        TimecodeRepository.getDeviceFrame(device)
+                                    },
+                                    isOnline = DevicesRepository.isDeviceOnline(device),
+                                    onClick = { onDeviceClick(device.id) },
+                                    onDeleteClick = { deleteDevice(device) },
+                                    onMakeMasterClick = { makeMaster(device) }
                                 )
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
+
             BottomLogBar(
                 onPacketLogClick = onPacketLogClick,
-                onProjectsClick = onProjectsClick
+                onAddDeviceClick = ::openAddDeviceDialog,
+                onProjectsClick = onProjectsClick,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
             )
         }
     }
@@ -386,7 +429,7 @@ fun DevicesScreen(
             },
             onScanAgain = {
                 if (BlePermissionManager.hasBleScanPermission(context)) {
-                    startDeviceScan()
+                    startDeviceScan(true)
                 } else {
                     scanPermissionLauncher.launch(
                         BlePermissionManager.requiredScanPermissions()
@@ -394,7 +437,7 @@ fun DevicesScreen(
                 }
             },
             onDeviceSelected = { selected ->
-                DevicesRepository.addDiscoveredGenerator(selected)
+                DevicesRepository.addDiscoveredDevice(selected)
                 showAddDialog = false
             }
         )
@@ -403,56 +446,43 @@ fun DevicesScreen(
     if (showMasterDialog) {
         MasterSelectDialog(
             devices = devices,
-            onDismiss = {
-                showMasterDialog = false
-            },
+            onDismiss = { showMasterDialog = false },
             onMasterSelected = { selectedChannel, selectedMaster ->
-                val masterCurrentFrame =
-                    TimecodeRepository.getDeviceFrame(selectedMaster)
-
+                val masterCurrentFrame = TimecodeRepository.getDeviceFrame(selectedMaster)
+                val baseFrame = TimecodeRepository.getMasterFrame(selectedMaster.fps.frameRate)
                 val updatedDevices = devices.map { device ->
-                    if (device.channel == selectedChannel) {
-                        device.copy(
-                            frameOffset = masterCurrentFrame - TimecodeRepository.getMasterFrame(
-                                selectedMaster.fps.frameRate
-                            ),
-                            fps = selectedMaster.fps,
-                            role =
-                                if (device.id == selectedMaster.id) {
-                                    DeviceRole.MASTER
-                                } else {
-                                    DeviceRole.SLAVE
-                                }
-                        )
-                    } else {
-                        device
-                    }
+                    device.copy(
+                        channel = selectedChannel,
+                        frameOffset = masterCurrentFrame - baseFrame,
+                        fps = selectedMaster.fps,
+                        role = if (device.id == selectedMaster.id) {
+                            DeviceRole.MASTER
+                        } else {
+                            DeviceRole.SLAVE
+                        }
+                    )
                 }
 
                 devices.clear()
                 devices.addAll(updatedDevices)
 
-                val updatedChannelDevices =
-                    updatedDevices.filter { it.channel == selectedChannel }
-
-                val updatedMaster =
-                    updatedChannelDevices.first { it.id == selectedMaster.id }
-
+                val updatedMaster = updatedDevices.first {
+                    it.id == selectedMaster.id
+                }
                 val packet = PacketFactory.buildSyncPacket(
-                    devicesInChannel = updatedChannelDevices,
+                    devicesInChannel = updatedDevices,
                     masterDevice = updatedMaster,
                     targetFrame = masterCurrentFrame,
                     fps = updatedMaster.fps,
-                    userBit = updatedMaster.userBit
+                    userBit = updatedMaster.userBit,
+                    broadcast = true
                 )
 
                 if (BlePermissionManager.hasBleAdvertisePermission(context)) {
-                    sendAndLogSyncPacket(packet)
+                    sendAndLogSyncPackets(listOf(selectedChannel to packet))
                 } else {
-                    pendingSyncPacket = packet
-                    permissionLauncher.launch(
-                        BlePermissionManager.requiredPermissions()
-                    )
+                    pendingSyncPackets = listOf(selectedChannel to packet)
+                    permissionLauncher.launch(BlePermissionManager.requiredPermissions())
                 }
 
                 showMasterDialog = false
@@ -505,9 +535,9 @@ fun DevicesScreen(
                 )
 
                 if (BlePermissionManager.hasBleAdvertisePermission(context)) {
-                    sendAndLogSyncPacket(packet)
+                    sendAndLogSyncPackets(listOf(selectedChannel to packet))
                 } else {
-                    pendingSyncPacket = packet
+                    pendingSyncPackets = listOf(selectedChannel to packet)
                     permissionLauncher.launch(
                         BlePermissionManager.requiredPermissions()
                     )
@@ -520,36 +550,194 @@ fun DevicesScreen(
 }
 
 @Composable
-fun BottomLogBar(
-    onPacketLogClick: () -> Unit,
-    onProjectsClick: () -> Unit
+private fun ChannelSection(
+    channel: DeviceChannel,
+    devices: List<TimecodeDevice>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onSync: () -> Unit,
+    deviceContent: @Composable (TimecodeDevice) -> Unit
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(40.dp)
-            .padding(end = 16.dp, bottom = 8.dp),
-        contentAlignment = Alignment.CenterEnd
+    val channelFps = devices.firstOrNull()?.fps?.title ?: "--"
+
+    Surface(
+        color = AppSurface,
+        shape = RoundedCornerShape(18.dp)
     ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.padding(12.dp)
         ) {
-            IconButton(onClick = onProjectsClick) {
-                Icon(
-                    imageVector = Icons.Default.FolderOpen,
-                    contentDescription = "Проекты",
-                    tint = Primary
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "CH ${channel.name}",
+                    color = Primary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
                 )
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Text(
+                    text = channelFps,
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                Surface(
+                    onClick = onSync,
+                    modifier = Modifier.size(40.dp),
+                    shape = CircleShape,
+                    color = ChannelSync
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Sync",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                IconButton(onClick = onToggle) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (expanded) "Свернуть канал" else "Развернуть канал",
+                        tint = TextSecondary
+                    )
+                }
             }
 
-            IconButton(onClick = onPacketLogClick) {
-                Text(
-                    text = "☰",
-                    color = TextSecondary,
-                    style = MaterialTheme.typography.headlineSmall
+            if (expanded) {
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    devices.chunked(2).forEach { rowDevices ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            rowDevices.forEach { device ->
+                                Box(modifier = Modifier.weight(1f)) {
+                                    deviceContent(device)
+                                }
+                            }
+
+                            if (rowDevices.size == 1) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BottomLogBar(
+    onPacketLogClick: () -> Unit,
+    onAddDeviceClick: () -> Unit,
+    onProjectsClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        BottomActionTile(
+            label = "Журнал BLE",
+            onClick = onPacketLogClick
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.ReceiptLong,
+                contentDescription = null,
+                tint = Primary,
+                modifier = Modifier.size(25.dp)
+            )
+        }
+
+        BottomActionTile(
+            label = "Добавить устройство",
+            onClick = onAddDeviceClick
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .background(Primary, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
                 )
             }
+        }
+
+        BottomActionTile(
+            label = "Проекты",
+            onClick = onProjectsClick
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.FolderOpen,
+                contentDescription = null,
+                tint = Primary,
+                modifier = Modifier.size(25.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RowScope.BottomActionTile(
+    label: String,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .weight(1f)
+            .height(78.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = PrimarySoft.copy(alpha = 0.8f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 6.dp, vertical = 9.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Box(
+                modifier = Modifier.height(34.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                icon()
+            }
+
+            Text(
+                text = label,
+                color = TextPrimary,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
+                maxLines = 1
+            )
         }
     }
 }

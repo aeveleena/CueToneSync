@@ -18,7 +18,8 @@ import com.cuetone.cuetonesync.ui.theme.PrimarySoft
 fun InfoChip(
     text: String,
     color: Color = Primary,
-    backgroundColor: Color = PrimarySoft
+    backgroundColor: Color = PrimarySoft,
+    compact: Boolean = false
 ) {
     Box(
         modifier = Modifier
@@ -26,12 +27,19 @@ fun InfoChip(
                 color = backgroundColor,
                 shape = RoundedCornerShape(8.dp)
             )
-            .padding(horizontal = 10.dp, vertical = 5.dp)
+            .padding(
+                horizontal = if (compact) 6.dp else 10.dp,
+                vertical = if (compact) 3.dp else 5.dp
+            )
     ) {
         Text(
             text = text,
             color = color,
-            style = MaterialTheme.typography.bodySmall,
+            style = if (compact) {
+                MaterialTheme.typography.labelSmall
+            } else {
+                MaterialTheme.typography.bodySmall
+            },
             fontWeight = FontWeight.Bold
         )
     }

@@ -32,27 +32,28 @@ fun MasterSelectDialog(
     onDismiss: () -> Unit,
     onMasterSelected: (DeviceChannel, TimecodeDevice) -> Unit
 ) {
+    val availableChannels = remember(devices) {
+        devices.map { it.channel }.distinct().sortedBy { it.ordinal }
+    }
     var selectedChannel by remember {
-        mutableStateOf(devices.firstOrNull()?.channel ?: DeviceChannel.A)
+        mutableStateOf(availableChannels.firstOrNull() ?: DeviceChannel.A)
     }
 
-    val channelDevices = devices.filter { it.channel == selectedChannel }
-
-    var selectedMasterId by remember(selectedChannel, devices.size) {
+    var selectedMasterId by remember(devices) {
         mutableStateOf(
-            channelDevices.firstOrNull { it.role == DeviceRole.MASTER }?.id
-                ?: channelDevices.firstOrNull()?.id
+            devices.firstOrNull { it.role == DeviceRole.MASTER }?.id
+                ?: devices.firstOrNull()?.id
         )
     }
 
-    val selectedMaster = channelDevices.firstOrNull { it.id == selectedMasterId }
+    val selectedMaster = devices.firstOrNull { it.id == selectedMasterId }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = AppSurface,
         title = {
             Text(
-                text = "Синхронизация канала",
+                text = "Объединить устройства",
                 color = TextPrimary,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
@@ -63,14 +64,14 @@ fun MasterSelectDialog(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
-                    text = "Канал",
+                    text = "Целевой канал",
                     color = TextPrimary,
                     fontWeight = FontWeight.Bold
                 )
 
                 MasterSoftDropdown(
                     selectedText = "CH ${selectedChannel.name}",
-                    options = DeviceChannel.entries.map { "CH ${it.name}" },
+                    options = availableChannels.map { "CH ${it.name}" },
                     onOptionSelected = { selected ->
                         selectedChannel = DeviceChannel.valueOf(
                             selected.removePrefix("CH ")
@@ -84,16 +85,16 @@ fun MasterSelectDialog(
                     fontWeight = FontWeight.Bold
                 )
 
-                if (channelDevices.isEmpty()) {
+                if (devices.isEmpty()) {
                     Text(
-                        text = "В выбранном канале нет устройств",
+                        text = "Нет подключённых устройств",
                         color = TextSecondary
                     )
                 } else {
                     Column(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        channelDevices.forEach { device ->
+                        devices.forEach { device ->
                             val selected = selectedMasterId == device.id
 
                             Box(
@@ -121,7 +122,7 @@ fun MasterSelectDialog(
                                 contentAlignment = Alignment.CenterStart
                             ) {
                                 Text(
-                                    text = "${device.name} · ${device.type}",
+                                    text = "${device.name} · ${device.type} · CH ${device.channel.name}",
                                     color = TextPrimary,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -145,7 +146,7 @@ fun MasterSelectDialog(
                     disabledContainerColor = TextDisabled
                 )
             ) {
-                Text("Синхронизировать")
+                Text("Объединить")
             }
         },
         dismissButton = {

@@ -1,6 +1,5 @@
 package com.cuetone.cuetonesync.ble
 
-import com.cuetone.cuetonesync.ble.model.ClapperPacket
 import com.cuetone.cuetonesync.ble.model.SlateRecordPacket
 import com.cuetone.cuetonesync.model.DeviceRole
 import com.cuetone.cuetonesync.model.FpsOption
@@ -65,45 +64,17 @@ object PacketFactory {
         )
     }
 
-    fun buildClapperPacket(
-        device: TimecodeDevice,
-        currentFrame: Int
-    ): CueToneTransmission {
-        val tc = splitFrames(currentFrame, device.fps.frameRate)
-        val packet = ClapperPacket(
-            serialNumber = device.serialNumber,
-            deviceName = device.name,
-            syncMode = 1,
-            isMaster = device.role == DeviceRole.MASTER,
-            channel = device.channel.name.first(),
-            frameRate = device.fps.frameRate,
-            hours = tc.hours,
-            minutes = tc.minutes,
-            seconds = tc.seconds,
-            frames = tc.frames,
-            signalLevel = device.outputVolume == "LTC",
-            gps = device.gpsEnabled,
-            gpsSync = device.gpsSyncEnabled,
-            displayBrightness = device.displayBrightness,
-            userBits = device.userBit
-        )
-        val payload = CueTonePacketSerializer.serializeClapperPacket(packet)
-
-        return CueToneLegacyProtocol.fragmentedTransmission(
-            target = CueToneLegacyProtocol.normalizeDeviceTarget(device.id),
-            packetType = CueToneLegacyProtocol.PACKET_CLAPPER,
-            payload = payload
-        )
-    }
-
     fun buildDeviceStatePacket(
         device: TimecodeDevice,
         currentFrame: Int
-    ): CueToneTransmission = if (device.type == "Clapper") {
-        buildClapperPacket(device, currentFrame)
-    } else {
-        buildGeneratorPacket(device, currentFrame)
-    }
+    ): CueToneTransmission = buildGeneratorPacket(device, currentFrame)
+
+    fun buildClapperLogRequest(deviceId: Int): CueToneTransmission =
+        CueToneLegacyProtocol.directTransmission(
+            target = CueToneLegacyProtocol.normalizeDeviceTarget(deviceId),
+            packetType = CueToneLegacyProtocol.PACKET_LOG_REQUEST,
+            payload = byteArrayOf(CueToneLegacyProtocol.LOG_REQUEST_MAGIC.toByte())
+        )
 
     @Suppress("UNUSED_PARAMETER")
     fun buildSyncPacket(
@@ -111,7 +82,8 @@ object PacketFactory {
         masterDevice: TimecodeDevice,
         targetFrame: Int,
         fps: FpsOption,
-        userBit: String
+        userBit: String,
+        broadcast: Boolean = false
     ): CueToneTransmission {
         require(devicesInChannel.isNotEmpty()) { "Channel sync requires at least one device" }
         val tc = splitFrames(targetFrame, fps.frameRate)
@@ -133,7 +105,11 @@ object PacketFactory {
         )
 
         return CueToneLegacyProtocol.directTransmission(
-            target = CueToneLegacyProtocol.channelTarget(masterDevice.channel.ordinal),
+            target = if (broadcast) {
+                CueToneLegacyProtocol.TARGET_BROADCAST
+            } else {
+                CueToneLegacyProtocol.channelTarget(masterDevice.channel.ordinal)
+            },
             packetType = CueToneLegacyProtocol.PACKET_SYNC,
             payload = payload
         )

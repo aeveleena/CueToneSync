@@ -16,6 +16,7 @@ import com.cuetone.cuetonesync.ui.theme.AppSurface
 import com.cuetone.cuetonesync.ui.theme.TextDisabled
 import com.cuetone.cuetonesync.ui.theme.TextPrimary
 import com.cuetone.cuetonesync.ui.theme.TextSecondary
+import com.cuetone.cuetonesync.ui.components.BackButton
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -39,12 +40,10 @@ fun PacketLogScreen(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
-                TextButton(
+                BackButton(
                     onClick = onBackClick,
                     modifier = Modifier.align(Alignment.CenterStart)
-                ) {
-                    Text("<-")
-                }
+                )
 
                 Text(
                     text = "Журнал BLE-пакетов",

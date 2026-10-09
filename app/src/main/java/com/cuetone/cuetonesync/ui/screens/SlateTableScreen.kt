@@ -18,7 +18,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,6 +36,7 @@ import com.cuetone.cuetonesync.ui.theme.AppSurface
 import com.cuetone.cuetonesync.ui.theme.Primary
 import com.cuetone.cuetonesync.ui.theme.TextPrimary
 import com.cuetone.cuetonesync.ui.theme.TextSecondary
+import com.cuetone.cuetonesync.ui.components.BackButton
 
 @Composable
 fun SlateTableScreen(
@@ -71,12 +71,10 @@ fun SlateTableScreen(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
-                TextButton(
+                BackButton(
                     onClick = onBackClick,
                     modifier = Modifier.align(Alignment.CenterStart)
-                ) {
-                    Text("<-")
-                }
+                )
 
                 Text(
                     text = table?.name ?: "Таблица дублей",
@@ -128,7 +126,14 @@ fun SlateTableScreen(
                             )
 
                             Text(
-                                text = "С${record.scene} / Д${record.take}",
+                                text = buildString {
+                                    record.cameraIndex?.let { cameraIndex ->
+                                        append("К")
+                                        append('A' + cameraIndex.coerceIn(0, 2))
+                                        append(" · ")
+                                    }
+                                    append("С${record.scene} / Д${record.take}")
+                                },
                                 color = TextSecondary
                             )
                         }

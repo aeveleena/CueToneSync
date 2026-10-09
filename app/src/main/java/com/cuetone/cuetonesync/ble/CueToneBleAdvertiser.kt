@@ -33,11 +33,12 @@ class CueToneBleAdvertiser(
     private var advertiseCallback: AdvertiseCallback? = null
     private var operationToken = 0
 
-    private val burstDurationMs = 1_000L
+    private val burstDurationMs = 5_000L
     private val pauseBetweenFragmentsMs = 120L
 
     fun sendPacket(
         transmission: CueToneTransmission,
+        durationMs: Long = burstDurationMs,
         onResult: (String) -> Unit
     ) {
         val validationError = validateEnvironment()
@@ -47,9 +48,8 @@ class CueToneBleAdvertiser(
         }
 
         stopAdvertising()
-        CueToneBleRadioCoordinator.pauseScanning()
         val token = operationToken
-        sendPayloadAt(transmission, 0, token, onResult)
+        sendPayloadAt(transmission, 0, token, durationMs, onResult)
     }
 
     fun sendPacketsSequentially(
@@ -84,12 +84,12 @@ class CueToneBleAdvertiser(
         transmission: CueToneTransmission,
         index: Int,
         token: Int,
+        durationMs: Long,
         onResult: (String) -> Unit
     ) {
         if (token != operationToken) return
 
         if (index >= transmission.advertisingPayloads.size) {
-            CueToneBleRadioCoordinator.resumeScanning()
             onResult(
                 "Legacy BLE: отправлено ${transmission.fragmentCount} " +
                     fragmentWord(transmission.fragmentCount)
@@ -98,7 +98,6 @@ class CueToneBleAdvertiser(
         }
 
         val bleAdvertiser = advertiser ?: run {
-            CueToneBleRadioCoordinator.resumeScanning()
             onResult("BLE advertising не поддерживается на этом устройстве")
             return
         }
@@ -123,16 +122,15 @@ class CueToneBleAdvertiser(
                     if (token != operationToken) return@postDelayed
                     stopCurrentBurst()
                     handler.postDelayed(
-                        { sendPayloadAt(transmission, index + 1, token, onResult) },
+                        { sendPayloadAt(transmission, index + 1, token, durationMs, onResult) },
                         pauseBetweenFragmentsMs
                     )
-                }, burstDurationMs)
+                }, durationMs)
             }
 
             override fun onStartFailure(errorCode: Int) {
                 if (token != operationToken) return
                 advertiseCallback = null
-                CueToneBleRadioCoordinator.resumeScanning()
                 onResult("Ошибка legacy advertising: ${errorName(errorCode)}")
             }
         }
@@ -143,11 +141,9 @@ class CueToneBleAdvertiser(
             bleAdvertiser.startAdvertising(settings, data, callback)
         } catch (_: SecurityException) {
             advertiseCallback = null
-            CueToneBleRadioCoordinator.resumeScanning()
             onResult("Нет разрешения BLUETOOTH_ADVERTISE")
         } catch (exception: IllegalArgumentException) {
             advertiseCallback = null
-            CueToneBleRadioCoordinator.resumeScanning()
             onResult("Ошибка запуска legacy advertising: ${exception.message}")
         }
     }

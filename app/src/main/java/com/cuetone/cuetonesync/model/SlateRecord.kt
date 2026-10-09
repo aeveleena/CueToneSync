@@ -17,5 +17,9 @@ data class SlateRecord(
     val longitude: Double,
     val gpsTime: String,
 
-    val note: String
+    val note: String,
+
+    val sourceDeviceId: Int? = null,
+    val sourceSequence: Long? = null,
+    val cameraIndex: Int? = null
 )

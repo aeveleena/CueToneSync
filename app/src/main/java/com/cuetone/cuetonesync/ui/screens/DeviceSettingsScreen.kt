@@ -33,6 +33,7 @@ import com.cuetone.cuetonesync.model.PacketLogEntry
 import com.cuetone.cuetonesync.permissions.BlePermissionManager
 import com.cuetone.cuetonesync.data.TimecodeRepository
 import com.cuetone.cuetonesync.ui.theme.*
+import com.cuetone.cuetonesync.ui.components.BackButton
 
 @Composable
 fun DeviceSettingsScreen(
@@ -55,7 +56,7 @@ fun DeviceSettingsScreen(
                 packet.packetType == CueToneLegacyProtocol.PACKET_DEVICE_NAME ->
                     "Generator Name"
                 device.type == "Clapper" ->
-                    "Packet #2 / Clapper Settings"
+                    "Individual V2 / Clapper Settings"
                 else ->
                     "Packet #1 / Generator Settings"
             }
@@ -166,12 +167,10 @@ fun DeviceSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
-                TextButton(
+                BackButton(
                     onClick = onBackClick,
                     modifier = Modifier.align(Alignment.CenterStart)
-                ) {
-                    Text("<-")
-                }
+                )
 
                 Text(
                     text = "Настройки",

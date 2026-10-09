@@ -61,7 +61,7 @@ fun AddDeviceDialog(
 
                 if (availableDevices.isEmpty()) {
                     Text(
-                        text = if (isScanning) "Ожидаем рекламу CUETONE" else "Генераторы не найдены",
+                        text = if (isScanning) "Ожидаем рекламу CUETONE" else "Устройства не найдены",
                         color = TextPrimary,
                         fontSize = 16.sp
                     )

@@ -29,6 +29,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.ui.res.painterResource
 import com.cuetone.cuetonesync.R
 import com.cuetone.cuetonesync.ui.theme.*
+import com.cuetone.cuetonesync.ui.components.BackButton
 
 @Composable
 fun GeneratorDetailsScreen(
@@ -111,12 +112,10 @@ fun GeneratorDetailsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    TextButton(
+                    BackButton(
                         onClick = onBackClick,
                         modifier = Modifier.align(Alignment.CenterStart)
-                    ) {
-                        Text("<-")
-                    }
+                    )
 
                     Text(
                         text = device.name,
